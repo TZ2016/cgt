@@ -731,6 +731,23 @@ def grad(cost, wrt):
     return retval
 
 # ================================================================
+# Graph conversion
+# ================================================================
+
+def to_deterministic(costs):
+    """
+    Convert a stochastic computation graph to a deterministic one
+    """
+    nodelist = list(topsorted(costs))
+    future_costs = []
+    for node in reversed(nodelist):
+        if node in costs:
+            future_costs.append(node)
+        elif node.is_random():
+            pass
+    raise NotImplementedError
+
+# ================================================================
 # Compilation 
 # ================================================================
 
