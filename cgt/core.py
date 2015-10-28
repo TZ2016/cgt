@@ -1395,7 +1395,7 @@ from .distributions import bernoulli
 DistrInfo = namedtuple(
     "DistrInfo",
     ("short",
-     "num_params",  # e.g. 2 for Binomial, 1 for Bernoulli
+     "params",  # name of params
      "distr",  # TODO_TZ: should support vectorized sample(...)
      "shp_apply",  # shape of output given params
      "out_type",
@@ -1405,7 +1405,7 @@ DistrInfo = namedtuple(
 DISTR_INFO = {
     "Bernoulli": DistrInfo(
         # TODO_TZ: missing cexpr
-        "Bernoulli", 1, bernoulli, lambda p: cgt.shape(p), 'i', "todo"
+        "Bernoulli", ("p",), bernoulli, lambda p: cgt.shape(p), 'i1', "todo"
     ),
     # "binom":
     # "norm":
@@ -1422,27 +1422,34 @@ class DistrOp(Op):
         self.info = UNARY_INFO[distr_name] if info is None else info
     def __repr__(self):
         return self.info.short
+    def order_params(self, **params):
+        return [params[param] for param in self.info.params]
     def get_name(self):
         return self.distr_name
     def get_hash(self):
         return utils.hash_seq1(self.distr_name)
     def shp_apply(self, parents):
-        return self.info.shp_apply(parents[:self.info.num_params])
+        return self.info.shp_apply(parents[:len(self.info.params)])
     def typ_apply(self, input_types):
         # TODO_TZ: not sure shp_apply can accept input_types
         return TensorType(self.info.out_type, self.shp_apply(input_types))
     def get_diff(self, num_inputs):
-        return [False] * self.info.num_params
+        return [False] * len(self.info.params)
     def pullback(self, inputs, output, goutput):
         raise NonDifferentiable
     def get_py_func(self, input_types):
         # TODO_TZ: may need to use input_types for error checking
         def f(reads, write):
-            write[...] = self.info.distr.sample(reads[:self.info.num_params])
+            write[...] = self.info.distr.sample(reads[:len(self.info.params)])
         return f
     def get_native_compile_info(self, input_types, devtype):
         # TODO_TZ: do we need this at all for python-only impl?
         raise NotImplementedError
+
+def distr(name, **params):
+    op = DistrOp(name)
+    params = op.order_params(params)
+    return Result(op, params)
 
 # Shape manip
 # ----------------------------------------------------------------
