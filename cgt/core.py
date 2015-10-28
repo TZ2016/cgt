@@ -1415,6 +1415,7 @@ DistrInfo = namedtuple(
      "params",  # name of params
      "distr",  # TODO_TZ: should support vectorized sample(...)
      "shp_apply",  # shape of output given params
+     "typ_apply",
      "out_type",
      "cexpr")
 )
@@ -1422,7 +1423,10 @@ DistrInfo = namedtuple(
 DISTR_INFO = {
     "bernoulli": DistrInfo(
         # TODO_TZ: missing cexpr
-        "bernoulli", ("p",), bernoulli, lambda p: cgt.shape(p), 'i1', "todo"
+        "bernoulli", ("p",), bernoulli,
+        lambda p: cgt.shape(p),
+        lambda p: TensorType("i1", p.ndim),
+        'i1', "todo"
     ),
     # "binom":
     # "norm":
@@ -1436,7 +1440,7 @@ class DistrOp(Op):
     is_random_op = True
     def __init__(self, distr_name, info=None):
         self.distr_name = distr_name
-        self.info = UNARY_INFO[distr_name] if info is None else info
+        self.info = DISTR_INFO[distr_name] if info is None else info
     def __repr__(self):
         return self.info.short
     def get_name(self):
@@ -1444,10 +1448,9 @@ class DistrOp(Op):
     def get_hash(self):
         return utils.hash_seq1(self.distr_name)
     def shp_apply(self, parents):
-        return self.info.shp_apply(parents[:len(self.info.params)])
-    def typ_apply(self, input_types):
-        # TODO_TZ: not sure shp_apply can accept input_types
-        return TensorType(self.info.out_type, self.shp_apply(input_types))
+        return self.info.shp_apply(*parents[:len(self.info.params)])
+    def typ_apply(self, parents):
+        return self.info.typ_apply(*parents[:len(self.info.params)])
     def get_diff(self, num_inputs):
         return [False] * len(self.info.params)
     def pullback(self, inputs, output, goutput):
