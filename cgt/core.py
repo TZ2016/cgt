@@ -209,6 +209,11 @@ class Node(object):
         Returns whether this node is either an argument or is data
         """
         return self.is_argument() or self.is_data()
+    def is_random(self):
+        """
+        Returns whether this node is stochastic
+        """
+        return self.op.is_random_op
     def get_diff(self):
         """
         Returns a sequence of bool indicating whether output is differentiable wrt each input
@@ -1049,7 +1054,7 @@ class ScalarRng(Op):
     """
     (shape...) -> array filled with iid random numbers, from either uniform or normal distribution
     """
-    available_impls = ("python",)        
+    available_impls = ("python",)
     is_random_op = True
     def __init__(self, kind):
         assert kind in ("uniform","gaussian")
@@ -1382,6 +1387,62 @@ def elwise_binary(opname, x, y):
     if (scalar_mask == (False, False)):
         assert (x.ndim == y.ndim)
     return Result(op, [x, y])
+
+# Stochastic
+# ----------------------------------------------------------------
+from .distributions import bernoulli
+
+DistrInfo = namedtuple(
+    "DistrInfo",
+    ("short",
+     "num_params",  # e.g. 2 for Binomial, 1 for Bernoulli
+     "pyfunc",  # TODO_TZ: should support vectorized samping
+     "shp_apply",  # shape of output given params
+     "out_type",
+     "cexpr")
+)
+
+DISTR_INFO = {
+    "Bernoulli": DistrInfo(
+        # TODO_TZ: missing cexpr
+        "Bernoulli", 1, bernoulli.sample, lambda p: cgt.shape(p), 'i', "todo"
+    ),
+    # "binom":
+    # "norm":
+}
+
+class DistrOp(Op):
+    """
+    Given parameters and inputs, sample from a specified distribution
+    """
+    available_impls = ("python",)
+    is_random_op = True
+    def __init__(self, distr_name, info=None):
+        self.distr_name = distr_name
+        self.info = UNARY_INFO[distr_name] if info is None else info
+    def __repr__(self):
+        return self.info.short
+    def get_name(self):
+        return self.distr_name
+    def get_hash(self):
+        return utils.hash_seq1(self.distr_name)
+    def shp_apply(self, parents):
+        return self.info.shp_apply(parents[:self.info.num_params])
+    def typ_apply(self, input_types):
+        # TODO_TZ: not sure shp_apply can accept input_types
+        return TensorType(self.info.out_type, self.shp_apply(input_types))
+    def get_diff(self, num_inputs):
+        return [False] * self.info.num_params
+    def pullback(self, inputs, output, goutput):
+        raise NonDifferentiable
+    def get_py_func(self, input_types):
+        # TODO_TZ: may need to use input_types for error checking
+        def f(reads, write):
+            write[...] = self.info.pyfunc(reads[:self.info.num_params])
+        return f
+    def get_native_compile_info(self, input_types, devtype):
+        # TODO_TZ: do we need this at all for python-only impl?
+        raise NotImplementedError
 
 # Shape manip
 # ----------------------------------------------------------------
