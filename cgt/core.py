@@ -1413,7 +1413,7 @@ DistrInfo = namedtuple(
     "DistrInfo",
     ("short",
      "params",  # name of params
-     "distr",  # TODO_TZ: should support vectorized sample(...)
+     "distr",
      "shp_apply",  # shape of output given params
      "typ_apply",
      "out_type",
@@ -1456,9 +1456,11 @@ class DistrOp(Op):
     def pullback(self, inputs, output, goutput):
         raise NonDifferentiable
     def get_py_func(self, input_types):
-        # TODO_TZ: may need to use input_types for error checking
         def f(reads, write):
-            write[...] = self.info.distr.sample(reads[:len(self.info.params)])
+            write[...] = self.info.distr.sample(
+                *reads[:len(self.info.params)],
+                numeric=True
+            )
         return f
     def get_native_compile_info(self, input_types, devtype):
         # TODO_TZ: do we need this at all for python-only impl?

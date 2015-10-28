@@ -1,5 +1,6 @@
 import cgt
 import core
+import numpy as np
 
 class Distribution(object):
     def lik(self, x, p):
@@ -33,10 +34,15 @@ class _Bernoulli(Distribution):
         l = x * p + (1 - x) * (1 - p)
         return l
 
-    def sample(self, p, shape=None):
-        p = core.as_node(p)
-        shape = shape or cgt.shape(p)
-        return cgt.rand(*shape) <= p
+    def sample(self, p, shape=None, numeric=False):
+        # TODO_TZ: maybe cgt has mechanism to eval an expr
+        if not numeric:
+            p = core.as_node(p)
+            shape = shape or cgt.shape(p)
+            return cgt.rand(*shape) <= p
+        else:
+            assert isinstance(p, np.ndarray)
+            return (np.random.rand(*p.shape) <= p).astype(np.int)
 
 bernoulli = _Bernoulli()
 
