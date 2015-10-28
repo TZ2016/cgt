@@ -1403,9 +1403,9 @@ DistrInfo = namedtuple(
 )
 
 DISTR_INFO = {
-    "Bernoulli": DistrInfo(
+    "bernoulli": DistrInfo(
         # TODO_TZ: missing cexpr
-        "Bernoulli", ("p",), bernoulli, lambda p: cgt.shape(p), 'i1', "todo"
+        "bernoulli", ("p",), bernoulli, lambda p: cgt.shape(p), 'i1', "todo"
     ),
     # "binom":
     # "norm":
@@ -1422,8 +1422,6 @@ class DistrOp(Op):
         self.info = UNARY_INFO[distr_name] if info is None else info
     def __repr__(self):
         return self.info.short
-    def order_params(self, **params):
-        return [params[param] for param in self.info.params]
     def get_name(self):
         return self.distr_name
     def get_hash(self):
@@ -1446,9 +1444,8 @@ class DistrOp(Op):
         # TODO_TZ: do we need this at all for python-only impl?
         raise NotImplementedError
 
-def distr(name, **params):
+def distr(name, *params):
     op = DistrOp(name)
-    params = op.order_params(params)
     return Result(op, params)
 
 # Shape manip
