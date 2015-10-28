@@ -738,6 +738,7 @@ def to_deterministic(costs):
     """
     Convert a stochastic computation graph to a deterministic one
     """
+    # TODO_TZ: finishe this function
     nodelist = list(topsorted(costs))
     future_costs = []
     for node in reversed(nodelist):
@@ -1416,7 +1417,6 @@ DistrInfo = namedtuple(
      "distr",
      "shp_apply",  # shape of output given params
      "typ_apply",
-     "out_type",
      "cexpr")
 )
 
@@ -1426,7 +1426,7 @@ DISTR_INFO = {
         "bernoulli", ("p",), bernoulli,
         lambda p: cgt.shape(p),
         lambda p: TensorType("i1", p.ndim),
-        'i1', "todo"
+        "todo"
     ),
     # "binom":
     # "norm":
@@ -1448,19 +1448,16 @@ class DistrOp(Op):
     def get_hash(self):
         return utils.hash_seq1(self.distr_name)
     def shp_apply(self, parents):
-        return self.info.shp_apply(*parents[:len(self.info.params)])
+        return self.info.shp_apply(*parents)
     def typ_apply(self, parents):
-        return self.info.typ_apply(*parents[:len(self.info.params)])
+        return self.info.typ_apply(*parents)
     def get_diff(self, num_inputs):
-        return [False] * len(self.info.params)
+        return [False] * num_inputs
     def pullback(self, inputs, output, goutput):
-        raise NonDifferentiable
+        raise NonDifferentiable("Convert to deterministic graph first")
     def get_py_func(self, input_types):
         def f(reads, write):
-            write[...] = self.info.distr.sample(
-                *reads[:len(self.info.params)],
-                numeric=True
-            )
+            write[...] = self.info.distr.sample(*reads, numeric=True)
         return f
     def get_native_compile_info(self, input_types, devtype):
         # TODO_TZ: do we need this at all for python-only impl?
@@ -1468,6 +1465,7 @@ class DistrOp(Op):
 
 def distr(name, *params):
     op = DistrOp(name)
+    assert len(params) == len(op.info.params)
     return Result(op, params)
 
 # Shape manip

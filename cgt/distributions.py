@@ -42,7 +42,7 @@ class _Bernoulli(Distribution):
             return cgt.rand(*shape) <= p
         else:
             assert isinstance(p, np.ndarray)
-            return (np.random.rand(*p.shape) <= p).astype(np.int)
+            return np.array(np.random.rand(*p.shape) <= p, dtype="i2")
 
 bernoulli = _Bernoulli()
 
