@@ -105,3 +105,6 @@ def subtract(x, y):
     "Applies function subtract elementwise to arguments x,y"
     return core.elwise_binary("-", x,y)
     
+def bernoulli(p):
+    "Sample from distribution bernoulli"
+    return core.distr("bernoulli", p)

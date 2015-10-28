@@ -1,5 +1,5 @@
 import cgt
-from . import core
+import core
 
 class Distribution(object):
     def lik(self, x, p):
@@ -12,6 +12,10 @@ class Distribution(object):
         raise NotImplementedError
     def sample(self, p):
         raise NotImplementedError
+
+# serve as a table to store past samples as an empirical distribution
+class Empirical(Distribution):
+    pass
 
 class _Bernoulli(Distribution):
     """

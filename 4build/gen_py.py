@@ -1,5 +1,5 @@
 import sys
-from cgt.core import UNARY_INFO, BINARY_INFO
+from cgt.core import UNARY_INFO, BINARY_INFO, DISTR_INFO
 import cgt, os, os.path as osp
 fh = sys.stdout
 
@@ -25,3 +25,12 @@ def {npname}(x, y):
     return core.elwise_binary("{infixname}", x,y)
     """.format(infixname = infixname, npname=info.short))
     
+    for (infixname, info) in sorted(DISTR_INFO.iteritems(), key=lambda x: x[0]):
+        fh.write(
+"""
+def {npname}({params}):
+    "Sample from distribution {npname}"
+    return core.distr("{infixname}", {params})
+""".format(params=", ".join(info.params), npname=info.short, infixname=infixname))
+
+
