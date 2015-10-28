@@ -1396,7 +1396,7 @@ DistrInfo = namedtuple(
     "DistrInfo",
     ("short",
      "num_params",  # e.g. 2 for Binomial, 1 for Bernoulli
-     "pyfunc",  # TODO_TZ: should support vectorized samping
+     "distr",  # TODO_TZ: should support vectorized sample(...)
      "shp_apply",  # shape of output given params
      "out_type",
      "cexpr")
@@ -1405,7 +1405,7 @@ DistrInfo = namedtuple(
 DISTR_INFO = {
     "Bernoulli": DistrInfo(
         # TODO_TZ: missing cexpr
-        "Bernoulli", 1, bernoulli.sample, lambda p: cgt.shape(p), 'i', "todo"
+        "Bernoulli", 1, bernoulli, lambda p: cgt.shape(p), 'i', "todo"
     ),
     # "binom":
     # "norm":
@@ -1438,7 +1438,7 @@ class DistrOp(Op):
     def get_py_func(self, input_types):
         # TODO_TZ: may need to use input_types for error checking
         def f(reads, write):
-            write[...] = self.info.pyfunc(reads[:self.info.num_params])
+            write[...] = self.info.distr.sample(reads[:self.info.num_params])
         return f
     def get_native_compile_info(self, input_types, devtype):
         # TODO_TZ: do we need this at all for python-only impl?
