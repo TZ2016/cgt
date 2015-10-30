@@ -6,13 +6,14 @@ import numpy as np
 
 
 def hybrid_layer(size_in, size_out, size_random):
+    assert size_out >= size_random
     X = cgt.matrix(fixed_shape=(None, size_in))
     out = cgt.sigmoid(nn.Affine(size_in, size_out)(X))
     if size_random > 0:
         out = cgt.concatenate([
-            cgt.bernoulli(out[:size_random]),
-            out[size_random:],
-        ])
+            cgt.bernoulli(out[:, :size_random]),
+            out[:, size_random:],
+        ], axis=1)
     return nn.Module([X], [out])
 
 
