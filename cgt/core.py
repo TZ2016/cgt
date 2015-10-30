@@ -2484,6 +2484,7 @@ class Composition(Op):
         if self._needs_compute_pullback:
             self._compute_pullback()
         gwrt = pullback([output], [goutput], inputs)
+        # TODO_TZ: why no return here?
     def shp_apply(self, inputs):
         out = clone(self._shp, replace=dict(utils.safezip(self._inputs, inputs)))
         return out
