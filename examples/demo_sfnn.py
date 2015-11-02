@@ -27,12 +27,27 @@ def hybrid_network(size_in, num_units, num_sto):
     return nn.Module([X], prev_out)
 
 
-def make_funcs(network, size_in):
-    X = cgt.matrix("X", fixed_shape=(1, size_in))
-    f_step = cgt.function([X], network([X]))
-    # TODO_TZ: f_loss is easier
+def make_funcs(network, size_in, size_out):
+    # step func
+    X = cgt.matrix("X", fixed_shape=(None, size_in))
+    Y_hat = network([X])[0]
+    f_step = cgt.function([X], [Y_hat])
+    # loss func
+    Y = cgt.matrix("Y", fixed_shape=(None, size_out))
+    size_batch = X.shape[0]
+    loss = cgt.sum(cgt.norm(Y_hat - Y, axis=1)) / size_batch
+    f_loss = cgt.function([X, Y], [Y_hat, loss])
+    # grad func
+    size_sample = 10  # number of samples for each example
+    size_random = 10  # number of stochastic nodes
+    size_costs = 1  # number of cost nodes
+    # EM: for each example, calculate grad using samples and update
+
+    C = cgt.matrix("C", fixed_shape=(size_sample, size_costs))
+    H = cgt.matrix("H", fixed_shape=(size_sample, size_random))
+
     # TODO_TZ: f_grad requires graph conversion
-    return f_step, None, None
+    return f_step, f_loss, None
 
 
 def main():
@@ -48,14 +63,12 @@ def main():
     # --num_inputs 1 --num_units 3 2 --num_sto 2 2
 
     sfnn = hybrid_network(args.num_inputs, args.num_units, args.num_sto)
-    f_step, f_loss, f_grad = make_funcs(sfnn, args.num_inputs)
+    f_step, f_loss, f_grad = make_funcs(sfnn, args.num_inputs, args.num_units[-1])
     for _ in range(10):
         # The number does not matter without training
-        print f_step(np.array([[7]]))
         # The following features batch_size > 1
-        print f_step(np.array([[7], [8]]))
+        print f_loss(np.array([[7], [8]]), np.array([[0, 0], [0, 0]]))
         # Verify that the output is stochastic
-
 
 if __name__ == "__main__":
     main()
