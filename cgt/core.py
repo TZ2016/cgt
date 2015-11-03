@@ -1495,10 +1495,10 @@ class DistrOp(Op):
     def typ_apply(self, parents):
         return self.info.typ_apply(*parents)
     def get_diff(self, num_inputs):
-        # return [False] * num_inputs
-        raise NonDifferentiable("Convert to deterministic graph first")
+        # logically should return true; if called, trigger exception in pullback
+        return [True] * num_inputs
     def pullback(self, inputs, output, goutput):
-        raise NonDifferentiable  # will not be called
+        raise NonDifferentiable("First convert to deterministic graph")
     def get_py_func(self, input_types):
         def f(reads, write):
             write[...] = self.distr.sample(*reads, numeric=True)
