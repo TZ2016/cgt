@@ -2951,11 +2951,13 @@ def count_nodes(outputs):
     if isinstance(outputs, Node): outputs = [outputs]
     return len(list(topsorted(outputs)))
 
-def clone(nodes, replace=None):
-    if isinstance(nodes, Node): return _clone_list([nodes], replace)[0]
-    else: return _clone_list(list(nodes), replace)
+def clone(nodes, replace=None, mappings={}):
+    if isinstance(nodes, Node):
+        return _clone_list([nodes], replace, mappings)[0]
+    else:
+        return _clone_list(list(nodes), replace, mappings)
 
-def _clone_list(nodes, replace):
+def _clone_list(nodes, replace, mappings={}):
     assert isinstance(nodes, list)
     if replace is None: replace = {}
     else:
@@ -2971,6 +2973,7 @@ def _clone_list(nodes, replace):
             replace[node] = node
         else:
             replace[node] = node.clone([replace[p] for p in node.parents])
+    mappings.update(replace)
     return [replace[node] for node in nodes]
 
 def alloc_from_shp(shp, typ):
