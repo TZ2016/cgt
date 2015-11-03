@@ -734,19 +734,37 @@ def grad(cost, wrt):
 # Graph conversion
 # ================================================================
 
-def to_deterministic(costs):
+def surr_cost(costs):
     """
-    Convert a stochastic computation graph to a deterministic one
+    Compute the surrogate cost for a stochastic computation graph
     """
-    # TODO_TZ: finishe this function
-    nodelist = list(topsorted(costs))
-    future_costs = []
-    for node in reversed(nodelist):
+    if isinstance(costs, Node): costs = [costs]
+    # TODO_TZ  possible to decompose cost which is a sum
+    costs = clone(costs)
+    all_nodes = list(topsorted(costs))
+    surr_costs = []  # surrogate costs to be returned
+    new_costs = {}  # new surrogate costs for each stochastic node
+    val_nodes = {}  # sampled values for each stochastic node
+    for node in reversed(all_nodes):
         if node in costs:
-            future_costs.append(node)
-        elif node.is_random():
-            pass
-    raise NotImplementedError
+            # maintain a list of future costs as of current step
+            surr_costs.append(node)
+        if node.is_random():
+            val_node = cgt.tensor(node.dtype, node.ndim, name=node.name,
+                                  fixed_shape=node.get_fixed_shape())
+            new_cost = node.op.distr.loglik() * cgt.sum(surr_costs)
+            val_nodes[node], new_costs[node] = val_node, new_cost
+    for node in reversed(all_nodes):
+        new_parents = []
+        for parent in node.parents:
+            if parent.is_random():
+                new_parents.append(val_nodes[parent])
+            else:
+                new_parents.append(parent)
+        # TODO_TZ not sure this is permissible
+        node.parents = new_parents
+    surr_costs.extend(new_costs.values())
+    return surr_costs
 
 # ================================================================
 # Compilation 
@@ -1422,7 +1440,7 @@ DistrInfo = namedtuple(
 
 DISTR_INFO = {
     "bernoulli": DistrInfo(
-        # TODO_TZ: missing cexpr
+        # TODO_TZ  missing cexpr
         "bernoulli", ("p",), bernoulli,
         lambda p: cgt.shape(p),
         lambda p: TensorType("i1", p.ndim),
@@ -1460,7 +1478,7 @@ class DistrOp(Op):
             write[...] = self.info.distr.sample(*reads, numeric=True)
         return f
     def get_native_compile_info(self, input_types, devtype):
-        # TODO_TZ: do we need this at all for python-only impl?
+        # TODO_TZ  do we need this at all for python-only impl?
         raise NotImplementedError
 
 def distr(name, *params):
@@ -2484,7 +2502,7 @@ class Composition(Op):
         if self._needs_compute_pullback:
             self._compute_pullback()
         gwrt = pullback([output], [goutput], inputs)
-        # TODO_TZ: why no return here?
+        # TODO_TZ  why no return here?
     def shp_apply(self, inputs):
         out = clone(self._shp, replace=dict(utils.safezip(self._inputs, inputs)))
         return out
