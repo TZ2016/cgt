@@ -1,23 +1,28 @@
 # Learning Stochastic Feedforward Neural Networks
 
 import cgt
+from cgt.core import surr_cost
 from cgt import nn
 import numpy as np
 
 
 def hybrid_layer(X, size_in, size_out, size_random):
-    assert size_out >= size_random
-    out = cgt.sigmoid(nn.Affine(size_in, size_out)(X))
+    assert size_out >= size_random >= 0
+    out = cgt.sigmoid(nn.Affine(
+        size_in, size_out, name="InnerProd(%d->%d)"%(size_in, size_out)
+    )(X))
     if size_random == 0:
         return out, None
-    else:
-        out_s = cgt.bernoulli(out[:, :size_random])
-        out = cgt.concatenate([out_s, out[:, size_random:]], axis=1)
-        return out, out_s
+    if size_random == size_out:
+        out_s = cgt.bernoulli(out)
+        return out_s, out_s
+    out_s = cgt.bernoulli(out[:, :size_random])
+    out = cgt.concatenate([out_s, out[:, size_random:]], axis=1)
+    return out, out_s
 
 
 def hybrid_network(size_in, num_units, num_stos):
-    X = cgt.matrix(fixed_shape=(None, size_in))
+    X = cgt.matrix("X", fixed_shape=(None, size_in))
     prev_num_units, prev_out = size_in, X
     all_sto_out, net_out_sto = [], None
     for (curr_num_units, curr_num_sto) in zip(num_units, num_stos):
