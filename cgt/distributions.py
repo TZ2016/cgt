@@ -23,19 +23,15 @@ class _Bernoulli(Distribution):
     Bernoulli: f(k; p) = p^k (1 - p)^(1 - k), k = 0, 1
     """
     def lik(self, x, p):
-        p = core.as_node(p)
-        assert p.shape == []  # p must be a scalar
-        l = (p ** x) * ((1 - p) ** (1 - x))
-        return l
+        raise NotImplementedError
 
     def loglik(self, x, p):
         p = core.as_node(p)
-        assert p.shape == []
         l = x * p + (1 - x) * (1 - p)
         return l
 
     def sample(self, p, shape=None, numeric=False):
-        # TODO_TZ: maybe cgt has mechanism to eval an expr
+        # TODO_TZ  maybe cgt has mechanism to eval an expr
         if not numeric:
             p = core.as_node(p)
             shape = shape or cgt.shape(p)
