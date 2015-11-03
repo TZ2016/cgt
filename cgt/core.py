@@ -752,7 +752,9 @@ def surr_cost(costs):
         if node.is_random():
             val_node = cgt.tensor(node.dtype, node.ndim, name=node.name,
                                   fixed_shape=node.get_fixed_shape())
-            new_cost = node.op.distr.loglik() * cgt.sum(surr_costs)
+            # TODO_TZ error-prone, but introduce a new method in Node seems an over-kill
+            logprob = node.op.distr.loglik(val_node, *node.parents)
+            new_cost = logprob * cgt.sum(surr_costs)
             val_nodes[node], new_costs[node] = val_node, new_cost
     for node in reversed(all_nodes):
         new_parents = []
@@ -1459,6 +1461,7 @@ class DistrOp(Op):
     def __init__(self, distr_name, info=None):
         self.distr_name = distr_name
         self.info = DISTR_INFO[distr_name] if info is None else info
+        self.distr = self.info.distr
     def __repr__(self):
         return self.info.short
     def get_name(self):
@@ -1475,7 +1478,7 @@ class DistrOp(Op):
         raise NonDifferentiable("Convert to deterministic graph first")
     def get_py_func(self, input_types):
         def f(reads, write):
-            write[...] = self.info.distr.sample(*reads, numeric=True)
+            write[...] = self.distr.sample(*reads, numeric=True)
         return f
     def get_native_compile_info(self, input_types, devtype):
         # TODO_TZ  do we need this at all for python-only impl?
