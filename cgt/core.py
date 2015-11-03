@@ -746,12 +746,19 @@ def _surr_arguments(nodes):
 def surr_cost(costs):
     """
     Compute the surrogate cost for a stochastic computation graph
+    The resulting deterministic graph is coupled with the input graph, any
+    operation on the input graph will potentially invalidate the result.
+    This method first clones the input graph and transform the cloned graph
+    in place. Stochastic components are replaced by new Argument nodes which
+    assume their sampled values.
     """
     if isinstance(costs, Node): costs = [costs]
-    # TODO_TZ  possible to decompose cost which is a sum
+    # TODO_TZ  possible to decompose cost when it is a sum
     # TODO_TZ  either require that costs returns shape (num_sample, ...) or
     #          sample one at a time  (assume the latter)
-    costs = clone(costs)
+    mappings = {}  # map from original node to cloned ones
+    costs = clone(costs, mappings=mappings)
+    mappings_inv = {v: k for k, v in mappings.iteritems()}
     all_nodes = list(topsorted(costs))
     cost_vals = dict(zip(costs, _surr_arguments(costs)))
     rand_vals = {}  # sampled values for each stochastic node
@@ -784,11 +791,13 @@ def surr_cost(costs):
         # sever the path to stochastic nodes, use their output value instead
         # TODO_TZ not sure this is permissible
         node.parents = new_parents
-    # return the sum of all surrogate costs
+    # the sum of all surrogate costs
     surr_costs = costs + [cgt.sum(new_cost) for new_cost in new_costs.values()]
     total_surr_costs = cgt.add_multi(surr_costs)
-    # deal with the dangling Argument
-    return total_surr_costs
+    # retrieve the mapping from cost/stochastic nodes to their value nodes
+    rand_args = {mappings_inv[k]: v for k, v in rand_vals.iteritems()}
+    cost_args = {mappings_inv[k]: v for k, v in cost_vals.iteritems()}
+    return total_surr_costs, cost_args, rand_args
 
 # ================================================================
 # Compilation 
