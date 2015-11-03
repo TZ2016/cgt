@@ -736,12 +736,12 @@ def grad(cost, wrt):
 # ================================================================
 
 def _surr_arguments(nodes):
-    if isinstance(nodes, Node):
-        return cgt.tensor(nodes.dtype, nodes.ndim, name=nodes.name,
-                       fixed_shape=nodes.get_fixed_shape())
-    return [cgt.tensor(node.dtype, node.ndim, name=node.name,
-                       fixed_shape=node.get_fixed_shape())
-            for node in nodes]
+    nodes_list = [nodes] if isinstance(nodes, Node) else nodes
+    rtn = [cgt.tensor(node.dtype, node.ndim,
+                      name="out(%d)"%node.counter,
+                      fixed_shape=node.get_fixed_shape())
+           for node in nodes_list]
+    return rtn[0] if isinstance(nodes, Node) else rtn
 
 def surr_cost(costs):
     """
@@ -785,7 +785,7 @@ def surr_cost(costs):
         # TODO_TZ not sure this is permissible
         node.parents = new_parents
     # return the sum of all surrogate costs
-    surr_costs = costs + [cgt.sum(new_cost) for new_cost in new_costs]
+    surr_costs = costs + [cgt.sum(new_cost) for new_cost in new_costs.values()]
     total_surr_costs = cgt.add_multi(surr_costs)
     # deal with the dangling Argument
     return total_surr_costs
@@ -1495,9 +1495,10 @@ class DistrOp(Op):
     def typ_apply(self, parents):
         return self.info.typ_apply(*parents)
     def get_diff(self, num_inputs):
-        return [False] * num_inputs
-    def pullback(self, inputs, output, goutput):
+        # return [False] * num_inputs
         raise NonDifferentiable("Convert to deterministic graph first")
+    def pullback(self, inputs, output, goutput):
+        raise NonDifferentiable  # will not be called
     def get_py_func(self, input_types):
         def f(reads, write):
             write[...] = self.distr.sample(*reads, numeric=True)
