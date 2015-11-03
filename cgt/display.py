@@ -98,5 +98,5 @@ def _node_name(node):
     if node.is_input():
         name = node.name
     else:
-        name = str(node.op)
-    return str(node.counter) + ':' + name
+        name = node.op
+    return str(node.counter) + ':' + str(name)
