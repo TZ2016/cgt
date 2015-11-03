@@ -31,18 +31,10 @@ def hybrid_network(size_in, num_units, num_stos):
         )
         if sto_out: all_sto_out.append(sto_out)
         prev_num_units = curr_num_units
-    # TODO_TZ: missing output layer for the complete SFNN
+    # TODO_TZ  missing output layer for the complete SFNN
     net_out = prev_out
     if all_sto_out: net_out_sto = cgt.concatenate(all_sto_out, axis=1)
     return X, net_out, net_out_sto
-
-
-def sample(num_sample, in_values, out_values, net_in, net_out, net_out_rand):
-    assert in_values.shape[0] == out_values.shape[0]
-    rand_values = np.zeros((num_sample, )
-
-    func = cgt.function([net_in], [net_out, net_out_rand])
-    for i in xrange(num_sample):
 
 
 def make_funcs(net_in, net_out, net_out_rand):
@@ -50,8 +42,9 @@ def make_funcs(net_in, net_out, net_out_rand):
     # step func
     f_step = cgt.function([net_in], [net_out, net_out_rand])
     # loss func
-    Y = cgt.matrix()
+    Y = cgt.matrix("Y")
     loss = cgt.sum(cgt.norm(net_out - Y, axis=1)) / size_batch
+    # loss = cgt.sum(net_out - Y)  # this is for debugging use
     f_loss = cgt.function([net_in, Y], [net_out, net_out_rand, loss])
     # grad func
     size_sample = 10  # number of samples for each example
@@ -61,8 +54,12 @@ def make_funcs(net_in, net_out, net_out_rand):
 
     C = cgt.matrix("C", fixed_shape=(size_sample, size_costs))
     H = cgt.matrix("H", fixed_shape=(size_sample, size_random))
+    # cgt.as_dot(loss).view()
+    surr = surr_cost(loss)
+    cgt.as_dot(surr).view()
+    grad = cgt.grad(surr, nn.get_parameters(surr))
 
-    # TODO_TZ: f_grad requires graph conversion
+    # TODO_TZ  f_grad requires graph conversion
     return f_step, f_loss, None
 
 
