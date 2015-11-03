@@ -743,6 +743,10 @@ def _surr_arguments(nodes):
            for node in nodes_list]
     return rtn[0] if isinstance(nodes, Node) else rtn
 
+def _decompose_costs(costs):
+    # TODO_TZ recursively decompose cost written as a sum
+    return costs
+
 def surr_cost(costs):
     """
     Compute the surrogate cost for a stochastic computation graph
@@ -753,9 +757,9 @@ def surr_cost(costs):
     assume their sampled values.
     """
     if isinstance(costs, Node): costs = [costs]
-    # TODO_TZ  possible to decompose cost when it is a sum
     # TODO_TZ  either require that costs returns shape (num_sample, ...) or
     #          sample one at a time  (assume the latter)
+    costs = _decompose_costs(costs)
     mappings = {}  # map from original node to cloned ones
     costs = clone(costs, mappings=mappings)
     mappings_inv = {v: k for k, v in mappings.iteritems()}
