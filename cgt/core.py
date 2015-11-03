@@ -734,39 +734,60 @@ def grad(cost, wrt):
 # Graph conversion
 # ================================================================
 
+def _surr_arguments(nodes):
+    if isinstance(nodes, Node):
+        return cgt.tensor(nodes.dtype, nodes.ndim, name=nodes.name,
+                       fixed_shape=nodes.get_fixed_shape())
+    return [cgt.tensor(node.dtype, node.ndim, name=node.name,
+                       fixed_shape=node.get_fixed_shape())
+            for node in nodes]
+
 def surr_cost(costs):
     """
     Compute the surrogate cost for a stochastic computation graph
     """
     if isinstance(costs, Node): costs = [costs]
     # TODO_TZ  possible to decompose cost which is a sum
+    # TODO_TZ  either require that costs returns shape (num_sample, ...) or
+    #          sample one at a time  (assume the latter)
     costs = clone(costs)
     all_nodes = list(topsorted(costs))
-    surr_costs = []  # surrogate costs to be returned
+    cost_vals = dict(zip(costs, _surr_arguments(costs)))
+    curr_costs = []  # book-keeping future costs
     new_costs = {}  # new surrogate costs for each stochastic node
-    val_nodes = {}  # sampled values for each stochastic node
+    rand_vals = {}  # sampled values for each stochastic node
     for node in reversed(all_nodes):
         if node in costs:
             # maintain a list of future costs as of current step
-            surr_costs.append(node)
+            curr_costs.append(node)
         if node.is_random():
-            val_node = cgt.tensor(node.dtype, node.ndim, name=node.name,
-                                  fixed_shape=node.get_fixed_shape())
+            # should be a sum of scalars (Argument nodes)
+            future_cost = cgt.add_multi([cost_vals[c] for c in curr_costs])
+            # constraint a surrogate Argument node for this node's output
+            rand_val = _surr_arguments(node)
             # TODO_TZ error-prone, but introduce a new method in Node seems an over-kill
-            logprob = node.op.distr.loglik(val_node, *node.parents)
-            new_cost = logprob * cgt.sum(surr_costs)
-            val_nodes[node], new_costs[node] = val_node, new_cost
+            # log probability, of shape (1, size_node)
+            logprob = node.op.distr.loglik(rand_val, *node.parents)
+            # surrogate cost for a group of random nodes (note: a vector!)
+            # now the new cost should have parents node.parents + argument
+            new_cost = logprob * future_cost
+            # wrap up
+            rand_vals[node], new_costs[node] = rand_val, new_cost
     for node in reversed(all_nodes):
         new_parents = []
         for parent in node.parents:
             if parent.is_random():
-                new_parents.append(val_nodes[parent])
+                new_parents.append(rand_vals[parent])
             else:
                 new_parents.append(parent)
+        # sever the path to stochastic nodes, use their output value instead
         # TODO_TZ not sure this is permissible
         node.parents = new_parents
-    surr_costs.extend(new_costs.values())
-    return surr_costs
+    # return the sum of all surrogate costs
+    surr_costs = costs + [cgt.sum(new_cost) for new_cost in new_costs]
+    total_surr_costs = cgt.add_multi(surr_costs)
+    # deal with the dangling Argument
+    return total_surr_costs
 
 # ================================================================
 # Compilation 
