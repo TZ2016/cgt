@@ -96,6 +96,7 @@ def as_dot(nodes):
 
 def _node_name(node):
     if node.is_input():
-        return node.name
+        name = node.name
     else:
-        return str(node.op)
+        name = str(node.op)
+    return str(node.counter) + ':' + name

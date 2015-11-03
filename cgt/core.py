@@ -186,9 +186,10 @@ class Node(object):
 
     def __repr__(self):
         if self.op is None:
-            return "Argument{%s,name='%s'}"%(self.typ,self.name)            
+            repr =  "Argument{%s,name='%s'}"%(self.typ,self.name)
         else:
-            return "Result{%s}"%(str(self.op))
+            repr = "Result{%s}"%(str(self.op))
+        return str(self.counter) + ':' + repr
 
     # CGT-specific
     # ----------------------------------------
@@ -753,9 +754,9 @@ def surr_cost(costs):
     costs = clone(costs)
     all_nodes = list(topsorted(costs))
     cost_vals = dict(zip(costs, _surr_arguments(costs)))
-    curr_costs = []  # book-keeping future costs
-    new_costs = {}  # new surrogate costs for each stochastic node
     rand_vals = {}  # sampled values for each stochastic node
+    new_costs = {}  # new surrogate costs for each stochastic node
+    curr_costs = []  # book-keeping future costs
     for node in reversed(all_nodes):
         if node in costs:
             # maintain a list of future costs as of current step
@@ -1462,9 +1463,9 @@ DistrInfo = namedtuple(
 )
 
 DISTR_INFO = {
-    "bernoulli": DistrInfo(
+    "Bernoulli": DistrInfo(
         # TODO_TZ  missing cexpr
-        "bernoulli", ("p",), bernoulli,
+        "Ber(p)", ("p",), bernoulli,
         lambda p: cgt.shape(p),
         lambda p: TensorType("i1", p.ndim),
         "todo"

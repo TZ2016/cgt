@@ -107,4 +107,4 @@ def subtract(x, y):
     
 def bernoulli(p):
     "Sample from distribution bernoulli"
-    return core.distr("bernoulli", p)
+    return core.distr("Bernoulli", p)
