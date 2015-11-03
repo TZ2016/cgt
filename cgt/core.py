@@ -213,7 +213,7 @@ class Node(object):
         """
         Returns whether this node is stochastic
         """
-        return self.op.is_random_op
+        return self.op is not None and self.op.is_random_op
     def get_diff(self):
         """
         Returns a sequence of bool indicating whether output is differentiable wrt each input
