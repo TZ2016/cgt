@@ -32,6 +32,14 @@ def hybrid_network(size_in, num_units, num_stos):
     return X, net_out, net_out_sto
 
 
+def sample(num_sample, in_values, out_values, net_in, net_out, net_out_rand):
+    assert in_values.shape[0] == out_values.shape[0]
+    rand_values = np.zeros((num_sample, )
+
+    func = cgt.function([net_in], [net_out, net_out_rand])
+    for i in xrange(num_sample):
+
+
 def make_funcs(net_in, net_out, net_out_rand):
     size_batch = net_in.shape[0]
     # step func
