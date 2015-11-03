@@ -7,6 +7,8 @@ class Distribution(object):
         raise NotImplementedError
     def loglik(self, x, p):
         raise NotImplementedError
+    def logprob(self, x, p):
+        raise NotImplementedError
     def crossent(self, p, q):
         raise NotImplementedError
     def kl(self, p, q):
@@ -22,10 +24,7 @@ class _Bernoulli(Distribution):
     """
     Bernoulli: f(k; p) = p^k (1 - p)^(1 - k), k = 0, 1
     """
-    def lik(self, x, p):
-        raise NotImplementedError
-
-    def loglik(self, x, p):
+    def logprob(self, x, p):
         p = core.as_node(p)
         l = x * p + (1 - x) * (1 - p)
         return l

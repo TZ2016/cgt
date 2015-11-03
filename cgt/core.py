@@ -767,7 +767,7 @@ def surr_cost(costs):
             rand_val = _surr_arguments(node)
             # TODO_TZ error-prone, but introduce a new method in Node seems an over-kill
             # log probability, of shape (1, size_node)
-            logprob = node.op.distr.loglik(rand_val, *node.parents)
+            logprob = node.op.distr.logprob(rand_val, *node.parents)
             # surrogate cost for a group of random nodes (note: a vector!)
             # now the new cost should have parents node.parents + argument
             new_cost = logprob * future_cost
