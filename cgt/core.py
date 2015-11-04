@@ -748,6 +748,7 @@ def _decompose_costs(costs):
     return costs
 
 def _merge_costs(costs):
+    costs = [costs] if isinstance(costs, Node) else costs
     assert isinstance(costs, list) and len(costs) > 0
     total_cost = []
     for cost in costs:
@@ -806,6 +807,7 @@ def _get_surr_costs(costs):
         # TODO_TZ not sure this is permissible
         node.parents = new_parents
     # process returns
+    # TODO_TZ maybe some old costs are dangling, remove them
     total_surr_costs = _merge_costs(costs + new_costs.values())
     args_rand = {mappings_inv[k]: v for k, v in rand_vals.iteritems()}
     args_cost = {mappings_inv[k]: v for k, v in cost_vals.iteritems()}
@@ -817,18 +819,26 @@ def get_surrogate_func(inputs, outputs, costs, wrt):
         """Given real-valued inputs, return outputs using sampled values """
         _outputs = f_sample(*_inputs)
         net_out, sample = _outputs[:len(outputs)], _outputs[len(outputs):]
+        s_rand, s_loss = sample[:len(args_rand.keys())], sample[len(args_rand.keys()):]
         _outputs = f_surr(*(_inputs + tuple(sample)))
         surr_loss, surr_grad = _outputs[0], _outputs[1:]
-        return surr_loss, surr_grad, sample, net_out
+        # TODO_TZ this is ugly, fix this
+        return {
+            'loss': s_loss,
+            'surr_loss': surr_loss,
+            'surr_grad': surr_grad,
+            'sample': s_rand,
+            'net_out': net_out
+        }
     assert isinstance(inputs, list) and isinstance(outputs, list)
     surr_costs, args_cost, args_rand = _get_surr_costs(costs)
     grad_surr = grad(surr_costs, wrt)
     # source nodes of the new args
-    src_nodes = args_cost.keys() + args_rand.keys()
+    src_nodes = args_rand.keys() + args_cost.keys()
     # this function samples the stochastic graph
     f_sample = cgt.function(inputs, outputs + src_nodes)
     # original plus additional args for gradient backprop
-    all_args = inputs + args_cost.values() + args_rand.values()
+    all_args = inputs + args_rand.values() + args_cost.values()
     # this function, given the sampled values, return surrogate loss and grad
     f_surr = cgt.function(all_args, [surr_costs] + grad_surr)
     return surr_func_wrapper
