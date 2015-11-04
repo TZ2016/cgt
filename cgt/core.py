@@ -804,10 +804,11 @@ def _get_surr_costs(costs):
     return total_surr_costs, args_cost, args_rand
 
 def get_surrogate_func(inputs, costs, wrt):
-    def surr_func_wrapper(_inputs):
+    def surr_func_wrapper(*_inputs):
         """Given real-valued inputs, return outputs using sampled values """
-        sample = f_sample(_inputs)
-        surr_loss, surr_grad = f_surr(_inputs + sample)
+        sample = f_sample(*_inputs)
+        _outputs = f_surr(*(_inputs + tuple(sample)))
+        surr_loss, surr_grad = _outputs[0], _outputs[1:]
         return surr_loss, surr_grad, sample
     assert isinstance(inputs, list)
     surr_costs, args_cost, args_rand = _get_surr_costs(costs)
@@ -819,7 +820,7 @@ def get_surrogate_func(inputs, costs, wrt):
     # original plus additional args for gradient backprop
     all_args = inputs + args_cost.values() + args_rand.values()
     # this function, given the sampled values, return surrogate loss and grad
-    f_surr = cgt.function(all_args, [surr_costs, grad_surr])
+    f_surr = cgt.function(all_args, [surr_costs] + grad_surr)
     return surr_func_wrapper
 
 # ================================================================
