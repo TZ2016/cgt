@@ -48,18 +48,23 @@ def make_funcs(net_in, net_out, net_out_rand):
     f_loss = cgt.function([net_in, Y], [net_out, net_out_rand, loss])
     # grad func
     f_surr = get_surrogate_func([net_in, Y], [net_out], loss, nn.get_parameters(loss))
-    f_grad = lambda *x: f_surr(*x)[1]
+    # f_grad = lambda *x: f_surr(*x)['surr_grad']
+    f_grad = lambda *x: f_surr(*x)
     return f_step, f_loss, f_grad
 
 
-def nice_print(X, Y, func, kind="loss"):
+def nice_print(X, Y, func):
     assert X.shape[0] == Y.shape[0], "unequal batch size"
-    if kind == "loss":
-        net_out, net_out_rand, loss = func(X, Y)
-        print "====="
-        print net_out
-        print loss
-        print net_out_rand
+    _out = func(X, Y)
+    print "====="
+    if isinstance(_out, (list, tuple)):
+        for _o in _out:
+            print _o
+    elif isinstance(_out, dict):
+        for k, v in _out.iteritems():
+            print (k, v)
+    else:
+        print _out
 
 
 def main():
@@ -79,8 +84,7 @@ def main():
     for _ in range(10):
         # The number does not matter without training
         # The following features batch_size > 1
-        print f_grad(np.array([[7], [8]]), np.array([[0, 0], [0, 0]]))
-        # nice_print(np.array([[7], [8]]), np.array([[0, 0], [0, 0]]), f_loss)
+        nice_print(np.array([[7], [8]]), np.array([[0, 0], [0, 0]]), f_grad)
         # Verify that the output is stochastic
 
 if __name__ == "__main__":
