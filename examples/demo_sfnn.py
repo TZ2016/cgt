@@ -1,7 +1,7 @@
 # Learning Stochastic Feedforward Neural Networks
 
 import cgt
-from cgt.core import surr_cost
+from cgt.core import get_surrogate_func
 from cgt import nn
 import numpy as np
 
@@ -47,20 +47,9 @@ def make_funcs(net_in, net_out, net_out_rand):
     # loss = cgt.sum(net_out - Y)  # this is for debugging use
     f_loss = cgt.function([net_in, Y], [net_out, net_out_rand, loss])
     # grad func
-    size_sample = 10  # number of samples for each example
-    size_random = 10  # number of stochastic nodes
-    size_costs = 1  # number of cost nodes
-    # EM: for each example, calculate grad using samples and update
-
-    C = cgt.matrix("C", fixed_shape=(size_sample, size_costs))
-    H = cgt.matrix("H", fixed_shape=(size_sample, size_random))
-    # cgt.as_dot(loss).view()
-    surr = surr_cost(loss)
-    cgt.as_dot(surr).view()
-    grad = cgt.grad(surr, nn.get_parameters(surr))
-
-    # TODO_TZ  f_grad requires graph conversion
-    return f_step, f_loss, None
+    f_surr = get_surrogate_func([net_in, Y], loss, nn.get_parameters(loss))
+    f_grad = lambda *x: f_surr(*x)[1]
+    return f_step, f_loss, f_grad
 
 
 def nice_print(X, Y, func, kind="loss"):
@@ -90,7 +79,8 @@ def main():
     for _ in range(10):
         # The number does not matter without training
         # The following features batch_size > 1
-        nice_print(np.array([[7], [8]]), np.array([[0, 0], [0, 0]]), f_loss)
+        print f_grad(np.array([[7], [8]]), np.array([[0, 0], [0, 0]]))
+        # nice_print(np.array([[7], [8]]), np.array([[0, 0], [0, 0]]), f_loss)
         # Verify that the output is stochastic
 
 if __name__ == "__main__":
