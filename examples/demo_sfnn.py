@@ -47,7 +47,7 @@ def make_funcs(net_in, net_out, net_out_rand):
     # loss = cgt.sum(net_out - Y)  # this is for debugging use
     f_loss = cgt.function([net_in, Y], [net_out, net_out_rand, loss])
     # grad func
-    f_surr = get_surrogate_func([net_in, Y], loss, nn.get_parameters(loss))
+    f_surr = get_surrogate_func([net_in, Y], [net_out], loss, nn.get_parameters(loss))
     f_grad = lambda *x: f_surr(*x)[1]
     return f_step, f_loss, f_grad
 

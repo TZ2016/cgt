@@ -747,6 +747,16 @@ def _decompose_costs(costs):
     # TODO_TZ recursively decompose cost written as a sum
     return costs
 
+def _merge_costs(costs):
+    assert isinstance(costs, list) and len(costs) > 0
+    total_cost = []
+    for cost in costs:
+        if cost.ndim > 0: cost = cgt.sum(cost)
+        total_cost.append(cost)
+    if len(total_cost) > 1:
+        total_cost = [cgt.add_multi(total_cost)]
+    return total_cost[0]
+
 def _get_surr_costs(costs):
     """
     Compute the surrogate cost for a stochastic computation graph
@@ -795,28 +805,28 @@ def _get_surr_costs(costs):
         # sever the path to stochastic nodes, use their output value instead
         # TODO_TZ not sure this is permissible
         node.parents = new_parents
-    # the sum of all surrogate costs
-    surr_costs = costs + [cgt.sum(new_cost) for new_cost in new_costs.values()]
-    total_surr_costs = cgt.add_multi(surr_costs)
-    # retrieve the mapping from cost/stochastic nodes to their value nodes
+    # process returns
+    total_surr_costs = _merge_costs(costs + new_costs.values())
     args_rand = {mappings_inv[k]: v for k, v in rand_vals.iteritems()}
     args_cost = {mappings_inv[k]: v for k, v in cost_vals.iteritems()}
     return total_surr_costs, args_cost, args_rand
 
-def get_surrogate_func(inputs, costs, wrt):
+def get_surrogate_func(inputs, outputs, costs, wrt):
+    # also helps to get additional output
     def surr_func_wrapper(*_inputs):
         """Given real-valued inputs, return outputs using sampled values """
-        sample = f_sample(*_inputs)
+        _outputs = f_sample(*_inputs)
+        net_out, sample = _outputs[:len(outputs)], _outputs[len(outputs):]
         _outputs = f_surr(*(_inputs + tuple(sample)))
         surr_loss, surr_grad = _outputs[0], _outputs[1:]
-        return surr_loss, surr_grad, sample
-    assert isinstance(inputs, list)
+        return surr_loss, surr_grad, sample, net_out
+    assert isinstance(inputs, list) and isinstance(outputs, list)
     surr_costs, args_cost, args_rand = _get_surr_costs(costs)
     grad_surr = grad(surr_costs, wrt)
     # source nodes of the new args
     src_nodes = args_cost.keys() + args_rand.keys()
     # this function samples the stochastic graph
-    f_sample = cgt.function(inputs, src_nodes)
+    f_sample = cgt.function(inputs, outputs + src_nodes)
     # original plus additional args for gradient backprop
     all_args = inputs + args_cost.values() + args_rand.values()
     # this function, given the sampled values, return surrogate loss and grad
