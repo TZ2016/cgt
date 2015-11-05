@@ -4,9 +4,14 @@ import cgt
 from cgt.core import get_surrogate_func
 from cgt import nn
 import numpy as np
+import scipy.special
 from param_collection import ParamCollection
 from demo_char_rnn import make_rmsprop_state, rmsprop_update
 
+HAS_BIAS = False
+FIXED_X = 3.
+NUM_EXAMPLES = 10
+TARGET_RATIO = 0.9
 
 def hybrid_layer(X, size_in, size_out, size_random):
     assert size_out >= size_random >= 0
@@ -40,19 +45,22 @@ def hybrid_network(size_in, num_units, num_stos):
 
 
 def make_funcs(net_in, net_out, net_out_rand):
+    def f_grad (*x):
+        out = f_surr(*x)
+        return out['surr_grad']
     size_batch = net_in.shape[0]
     # step func
     f_step = cgt.function([net_in], [net_out, net_out_rand])
     # loss func
     Y = cgt.matrix("Y")
-    loss = cgt.sum(cgt.norm(net_out - Y, axis=1)) / size_batch
+    # loss = cgt.sum(cgt.norm(net_out - Y, axis=1)) / size_batch
+    loss = cgt.sum((net_out - Y) ** 2) / size_batch
     params = nn.get_parameters(loss)
+    params = [p for p in params if not p.name.endswith(".b")]
     # loss = cgt.sum(net_out - Y)  # this is for debugging use
     f_loss = cgt.function([net_in, Y], [net_out, net_out_rand, loss])
     # grad func
     f_surr = get_surrogate_func([net_in, Y], [net_out], loss, params)
-    f_grad = lambda *x: f_surr(*x)['surr_grad']
-    # f_grad = lambda *x: f_surr(*x)
     return params, f_step, f_loss, f_grad
 
 
@@ -74,7 +82,7 @@ def main():
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--step_size", type=float, default=.01)
-    parser.add_argument("--n_epochs", type=int, default=10)
+    parser.add_argument("--n_epochs", type=int, default=100)
     parser.add_argument("--decay_rate", type=float, default=.95)
     parser.add_argument("--num_inputs", type=int)
     parser.add_argument("--num_units", type=int, nargs='+')
@@ -89,19 +97,26 @@ def main():
     params, f_step, f_loss, f_grad = make_funcs(X, out, out_rand)
     param_col = ParamCollection(params)
     param_col.set_value_flat(
-        np.random.uniform(-.1, .1, size=(param_col.get_total_size(),))
+        np.random.uniform(2., 2., size=(param_col.get_total_size(),))
     )
     optim_state = make_rmsprop_state(theta=param_col.get_value_flat(),
                                      step_size=args.step_size,
                                      decay_rate=args.decay_rate)
 
+    training_x = FIXED_X * np.ones((NUM_EXAMPLES, 1, 1))
+    training_y = np.ones((NUM_EXAMPLES, 1, 1))
+    training_y[:NUM_EXAMPLES * TARGET_RATIO] = 0.
+    np.random.shuffle(training_y)
+
     for i_epoch in range(args.n_epochs):
-        x, y = np.array([[7]]), np.array([[0]])
-        grad = f_grad(x, y)
-        print grad
-        grad = param_col.flatten_values(grad)
-        rmsprop_update(grad, optim_state)
-        param_col.set_value_flat(optim_state.theta)
+        for j in range(NUM_EXAMPLES):
+            x, y = training_x[j], training_y[j]
+            grad = f_grad(x, y)
+            # print grad
+            grad = param_col.flatten_values(grad)
+            rmsprop_update(grad, optim_state)
+            param_col.set_value_flat(optim_state.theta)
+            print scipy.special.expit(param_col.get_values()[0] * FIXED_X)
         # nice_print(np.array([[7], [8]]), np.array([[0, 0], [0, 0]]), f_grad)
 
 if __name__ == "__main__":
