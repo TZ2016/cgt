@@ -14,7 +14,7 @@ EXAMPLES_ARGS = Table(
     num_examples=10,
     x=np.array([3.]),
     y=np.array([0.]),
-    truth_ratio=[.1],
+    truth_ratio=[.5],
 )
 
 DEFAULT_ARGS = Table(
@@ -78,6 +78,7 @@ def hybrid_network(size_in, size_out, num_units, num_stos):
 def make_funcs(net_in, net_out):
     def f_grad (*x):
         out = f_surr(*x)
+        print out['surr_loss']
         return out['surr_grad']
     size_batch = net_in.shape[0]
     # step func
@@ -126,8 +127,8 @@ def main():
     # And pure stochastic layer
     # --num_inputs 1 --num_units 3 2 --num_sto 2 2
 
-    X, out = hybrid_network(args.num_inputs, args.num_outputs, args.num_units, args.num_sto)
-    params, f_step, f_loss, f_grad = make_funcs(X, out)
+    net_in, net_out = hybrid_network(args.num_inputs, args.num_outputs, args.num_units, args.num_sto)
+    params, f_step, f_loss, f_grad = make_funcs(net_in, net_out)
     param_col = ParamCollection(params)
     param_col.set_value_flat(
         np.random.uniform(2., 2., size=(param_col.get_total_size(),))
@@ -136,15 +137,26 @@ def main():
                                      step_size=args.step_size,
                                      decay_rate=args.decay_rate)
 
-    training_x, training_y = generate_examples(EXAMPLES_ARGS.num_examples,
-                                               EXAMPLES_ARGS.x, EXAMPLES_ARGS.y,
-                                               EXAMPLES_ARGS.truth_ratio)
+    X, Y = generate_examples(EXAMPLES_ARGS.num_examples,
+                             EXAMPLES_ARGS.x, EXAMPLES_ARGS.y,
+                             EXAMPLES_ARGS.truth_ratio)
+
+    X1, Y1 = generate_examples(10,
+                               np.array([3.]), np.array([0]),
+                               [0.5])
+    X2, Y2 = generate_examples(10,
+                               np.array([2.]), np.array([0]),
+                               [0.1])
+    X3, Y3 = generate_examples(10,
+                               np.array([4.]), np.array([0]),
+                               [0.9])
+    X = np.concatenate([X1, X2, X3])
+    Y = np.concatenate([Y1, Y2, Y3])
 
     for i_epoch in range(args.n_epochs):
-        for j in range(training_x.shape[0]):
-            x, y = training_x[j:j+1], training_y[j:j+1]
+        for j in range(X.shape[0]):
+            x, y = X[j:j+1], Y[j:j+1]
             grad = f_grad(x, y)
-            # print grad
             grad = param_col.flatten_values(grad)
             rmsprop_update(grad, optim_state)
             param_col.set_value_flat(optim_state.theta)
@@ -152,14 +164,11 @@ def main():
             _ber_param = _params_val[0].T.dot(EXAMPLES_ARGS.x)
             if not args.no_bias: _ber_param += _params_val[1]
             _ber_param = sigmoid(_ber_param)
-            print ""
-            print "network params"
-            pprint.pprint(_params_val)
-            print "bernoulli param"
-            pprint.pprint( _ber_param)
-            # print f_step(x)
-            # print scipy.special.expit(param_col.get_values()[0] * DEFAULT_ARGS.x)
-        # nice_print(np.array([[7], [8]]), np.array([[0, 0], [0, 0]]), f_grad)
+            # print ""
+            # print "network params"
+            # pprint.pprint(_params_val)
+            # print "bernoulli param"
+            # pprint.pprint( _ber_param)
 
 if __name__ == "__main__":
     main()
