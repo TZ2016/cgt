@@ -1526,7 +1526,7 @@ DISTR_INFO = {
         # TODO_TZ  missing cexpr
         "Ber(p)", ("p",), bernoulli,
         lambda p: cgt.shape(p),
-        lambda p: TensorType("i1", p.ndim),
+        lambda p: TensorType("f8", p.ndim),
         "todo"
     ),
     # "binom":
