@@ -4,14 +4,38 @@ import cgt
 from cgt.core import get_surrogate_func
 from cgt import nn
 import numpy as np
-import scipy.special
+from scipy.special import expit as sigmoid
 from param_collection import ParamCollection
-from demo_char_rnn import make_rmsprop_state, rmsprop_update
+from demo_char_rnn import make_rmsprop_state, rmsprop_update, Table
 
-HAS_BIAS = False
-FIXED_X = 3.
-NUM_EXAMPLES = 10
-TARGET_RATIO = 0.9
+DEFAULT_ARGS = Table(
+    # network
+    num_inputs=2,
+    num_units=[2],
+    num_sto=[1],
+    no_bias=True,
+    # training
+    n_epochs=30,
+    step_size=.01,
+    decay_rate=.95,
+    # example generation
+    num_examples=10,
+    x=np.array([0., 3.]),
+    y=np.array([10., 0.]),
+    truth_ratio=[None, .9],
+)
+
+
+def generate_examples(N, x, y, p_y):
+    X = x * np.ones((N, x.size))
+    Y = y * np.ones((N, y.size))
+    for i, p in enumerate(p_y):
+        if p is not None:
+            Y[:, i] = 1.
+            Y[:, i][:int(N*p)] = 0.
+    np.random.shuffle(Y)
+    return X, Y
+
 
 def hybrid_layer(X, size_in, size_out, size_random):
     assert size_out >= size_random >= 0
@@ -56,7 +80,8 @@ def make_funcs(net_in, net_out, net_out_rand):
     # loss = cgt.sum(cgt.norm(net_out - Y, axis=1)) / size_batch
     loss = cgt.sum((net_out - Y) ** 2) / size_batch
     params = nn.get_parameters(loss)
-    params = [p for p in params if not p.name.endswith(".b")]
+    if DEFAULT_ARGS.no_bias:
+        params = [p for p in params if not p.name.endswith(".b")]
     # loss = cgt.sum(net_out - Y)  # this is for debugging use
     f_loss = cgt.function([net_in, Y], [net_out, net_out_rand, loss])
     # grad func
@@ -87,7 +112,8 @@ def main():
     parser.add_argument("--num_inputs", type=int)
     parser.add_argument("--num_units", type=int, nargs='+')
     parser.add_argument("--num_sto", type=int, nargs='+')
-    args = parser.parse_args()
+    # args = parser.parse_args()
+    args = DEFAULT_ARGS
 
     # Hybrid layer with multiple stochastic nodes
     # And pure stochastic layer
@@ -103,20 +129,24 @@ def main():
                                      step_size=args.step_size,
                                      decay_rate=args.decay_rate)
 
-    training_x = FIXED_X * np.ones((NUM_EXAMPLES, 1, 1))
-    training_y = np.ones((NUM_EXAMPLES, 1, 1))
-    training_y[:NUM_EXAMPLES * TARGET_RATIO] = 0.
-    np.random.shuffle(training_y)
+    training_x, training_y = generate_examples(args.num_examples, args.x, args.y, args.truth_ratio)
 
     for i_epoch in range(args.n_epochs):
-        for j in range(NUM_EXAMPLES):
-            x, y = training_x[j], training_y[j]
+        for j in range(args.num_examples):
+            x, y = training_x[j:j+1], training_y[j:j+1]
             grad = f_grad(x, y)
             # print grad
             grad = param_col.flatten_values(grad)
             rmsprop_update(grad, optim_state)
             param_col.set_value_flat(optim_state.theta)
-            print scipy.special.expit(param_col.get_values()[0] * FIXED_X)
+            _params_val =  param_col.get_values()
+            _ber_param = _params_val[0].T.dot(args.x)
+            if not args.no_bias: _ber_param += _params_val[1]
+            _ber_param = sigmoid(_ber_param)
+            print _params_val
+            print _ber_param
+            # print f_step(x)
+            # print scipy.special.expit(param_col.get_values()[0] * DEFAULT_ARGS.x)
         # nice_print(np.array([[7], [8]]), np.array([[0, 0], [0, 0]]), f_grad)
 
 if __name__ == "__main__":
