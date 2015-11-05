@@ -770,6 +770,7 @@ def _get_surr_costs(costs):
     if isinstance(costs, Node): costs = [costs]
     # TODO_TZ  either require that costs returns shape (num_sample, ...) or
     #          sample one at a time  (assume the latter)
+    # with the current impl, does not help to supply batch > 1
     costs = _decompose_costs(costs)
     mappings = {}  # map from original node to cloned ones
     costs = clone(costs, mappings=mappings)
@@ -824,10 +825,15 @@ def get_surrogate_func(inputs, outputs, costs, wrt):
         surr_loss, surr_grad = _outputs[0], _outputs[1:]
         # TODO_TZ this is ugly, fix this
         return {
+            # list of original loss (list of 0-dim ndarray)
             'loss': s_loss,
+            # a single 0-dim ndarray
             'surr_loss': surr_loss,
+            # list of matrices of size (1, dim) for each param
             'surr_grad': surr_grad,
+            # list of matrices of size (batch, dim) for each stochastic node
             'sample': s_rand,
+            # list of matrices of size (batch, dim) for each output
             'net_out': net_out
         }
     assert isinstance(inputs, list) and isinstance(outputs, list)

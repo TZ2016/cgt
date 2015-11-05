@@ -4,6 +4,8 @@ import cgt
 from cgt.core import get_surrogate_func
 from cgt import nn
 import numpy as np
+from param_collection import ParamCollection
+from demo_char_rnn import make_rmsprop_state, rmsprop_update
 
 
 def hybrid_layer(X, size_in, size_out, size_random):
@@ -44,13 +46,14 @@ def make_funcs(net_in, net_out, net_out_rand):
     # loss func
     Y = cgt.matrix("Y")
     loss = cgt.sum(cgt.norm(net_out - Y, axis=1)) / size_batch
+    params = nn.get_parameters(loss)
     # loss = cgt.sum(net_out - Y)  # this is for debugging use
     f_loss = cgt.function([net_in, Y], [net_out, net_out_rand, loss])
     # grad func
-    f_surr = get_surrogate_func([net_in, Y], [net_out], loss, nn.get_parameters(loss))
-    # f_grad = lambda *x: f_surr(*x)['surr_grad']
-    f_grad = lambda *x: f_surr(*x)
-    return f_step, f_loss, f_grad
+    f_surr = get_surrogate_func([net_in, Y], [net_out], loss, params)
+    f_grad = lambda *x: f_surr(*x)['surr_grad']
+    # f_grad = lambda *x: f_surr(*x)
+    return params, f_step, f_loss, f_grad
 
 
 def nice_print(X, Y, func):
@@ -70,6 +73,9 @@ def nice_print(X, Y, func):
 def main():
     import argparse
     parser = argparse.ArgumentParser()
+    parser.add_argument("--step_size", type=float, default=.01)
+    parser.add_argument("--n_epochs", type=int, default=10)
+    parser.add_argument("--decay_rate", type=float, default=.95)
     parser.add_argument("--num_inputs", type=int)
     parser.add_argument("--num_units", type=int, nargs='+')
     parser.add_argument("--num_sto", type=int, nargs='+')
@@ -80,12 +86,23 @@ def main():
     # --num_inputs 1 --num_units 3 2 --num_sto 2 2
 
     X, out, out_rand = hybrid_network(args.num_inputs, args.num_units, args.num_sto)
-    f_step, f_loss, f_grad = make_funcs(X, out, out_rand)
-    for _ in range(10):
-        # The number does not matter without training
-        # The following features batch_size > 1
-        nice_print(np.array([[7], [8]]), np.array([[0, 0], [0, 0]]), f_grad)
-        # Verify that the output is stochastic
+    params, f_step, f_loss, f_grad = make_funcs(X, out, out_rand)
+    param_col = ParamCollection(params)
+    param_col.set_value_flat(
+        np.random.uniform(-.1, .1, size=(param_col.get_total_size(),))
+    )
+    optim_state = make_rmsprop_state(theta=param_col.get_value_flat(),
+                                     step_size=args.step_size,
+                                     decay_rate=args.decay_rate)
+
+    for i_epoch in range(args.n_epochs):
+        x, y = np.array([[7]]), np.array([[0]])
+        grad = f_grad(x, y)
+        print grad
+        grad = param_col.flatten_values(grad)
+        rmsprop_update(grad, optim_state)
+        param_col.set_value_flat(optim_state.theta)
+        # nice_print(np.array([[7], [8]]), np.array([[0, 0], [0, 0]]), f_grad)
 
 if __name__ == "__main__":
     main()

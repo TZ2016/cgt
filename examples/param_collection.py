@@ -28,6 +28,16 @@ class ParamCollection(object):
     def num_vars(self):
         return len(self._params)
 
+    def flatten_values(self, parvals):
+        rtn = np.empty(self.get_total_size(), dtype=cgt.floatX)
+        n = 0
+        assert len(parvals) == len(self._params)
+        for (param, newval) in zip(self._params, parvals):
+            s = param.op.get_size()
+            rtn[n:n+s] = newval.flat
+            n += s
+        return rtn
+
     def set_values(self, parvals):
         assert len(parvals) == len(self._params)
         for (param, newval) in zip(self._params, parvals):
