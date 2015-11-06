@@ -2,6 +2,7 @@
 
 import cgt
 import pprint
+import matplotlib.pyplot as plt
 from cgt.core import get_surrogate_func
 from cgt import nn
 import numpy as np
@@ -14,7 +15,7 @@ EXAMPLES_ARGS = Table(
     num_examples=10,
     x=np.array([3.]),
     y=np.array([0.]),
-    truth_ratio=[.5],
+    truth_ratio=[.1],
 )
 
 DEFAULT_ARGS = Table(
@@ -23,9 +24,9 @@ DEFAULT_ARGS = Table(
     num_outputs=EXAMPLES_ARGS.y.size,
     num_units=[1],
     num_sto=[1],
-    no_bias=True,
+    no_bias=False,
     # training
-    n_epochs=100,
+    n_epochs=50,
     step_size=.01,
     decay_rate=.95,
 )
@@ -78,8 +79,7 @@ def hybrid_network(size_in, size_out, num_units, num_stos):
 def make_funcs(net_in, net_out):
     def f_grad (*x):
         out = f_surr(*x)
-        print out['surr_loss']
-        return out['surr_grad']
+        return out['loss'], out['surr_loss'], out['surr_grad']
     size_batch = net_in.shape[0]
     # step func
     f_step = cgt.function([net_in], [net_out])
@@ -141,34 +141,43 @@ def main():
                              EXAMPLES_ARGS.x, EXAMPLES_ARGS.y,
                              EXAMPLES_ARGS.truth_ratio)
 
-    X1, Y1 = generate_examples(10,
-                               np.array([3.]), np.array([0]),
-                               [0.5])
-    X2, Y2 = generate_examples(10,
-                               np.array([2.]), np.array([0]),
-                               [0.1])
-    X3, Y3 = generate_examples(10,
-                               np.array([4.]), np.array([0]),
-                               [0.9])
-    X = np.concatenate([X1, X2, X3])
-    Y = np.concatenate([Y1, Y2, Y3])
+    # X1, Y1 = generate_examples(10,
+    #                            np.array([3.]), np.array([0]),
+    #                            [0.5])
+    # X2, Y2 = generate_examples(10,
+    #                            np.array([2.]), np.array([0]),
+    #                            [0.1])
+    # X3, Y3 = generate_examples(10,
+    #                            np.array([4.]), np.array([0]),
+    #                            [0.9])
+    # X = np.concatenate([X1, X2, X3])
+    # Y = np.concatenate([Y1, Y2, Y3])
 
+    all_loss = []
+    all_surr_loss = []
     for i_epoch in range(args.n_epochs):
         for j in range(X.shape[0]):
             x, y = X[j:j+1], Y[j:j+1]
-            grad = f_grad(x, y)
+            loss, loss_surr, grad = f_grad(x, y)
+            all_loss.append(np.sum(loss))
+            all_surr_loss.append(loss_surr)
+            # update
             grad = param_col.flatten_values(grad)
             rmsprop_update(grad, optim_state)
             param_col.set_value_flat(optim_state.theta)
+            # print
             _params_val =  param_col.get_values()
             _ber_param = _params_val[0].T.dot(EXAMPLES_ARGS.x)
-            if not args.no_bias: _ber_param += _params_val[1]
+            if not args.no_bias: _ber_param += _params_val[1].flatten()
             _ber_param = sigmoid(_ber_param)
-            # print ""
-            # print "network params"
-            # pprint.pprint(_params_val)
-            # print "bernoulli param"
-            # pprint.pprint( _ber_param)
+            print ""
+            print "network params"
+            pprint.pprint(_params_val)
+            print "bernoulli param"
+            pprint.pprint( _ber_param)
+    all_loss, all_surr_loss = np.array(all_loss), np.array(all_surr_loss)
+    plt.plot(np.convolve(all_loss, [1. / X.shape[0]] * X.shape[0], 'same'))
+    plt.plot(np.convolve(all_surr_loss, [1. / X.shape[0]] * X.shape[0], 'same'))
 
 if __name__ == "__main__":
     main()
