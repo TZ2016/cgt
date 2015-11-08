@@ -1,6 +1,7 @@
 import cgt
 import core
 import numpy as np
+import numpy.random as nr
 
 class Distribution(object):
     def lik(self, x, p):
@@ -24,12 +25,16 @@ class _Bernoulli(Distribution):
     """
     Bernoulli: f(k; p) = p^k (1 - p)^(1 - k), k = 0, 1
     """
+    def loglik(self, x, p):
+        """ Log likelihood of params on dataset x """
+        return cgt.sum(self.logprob(x, p))
     def logprob(self, x, p):
+        """ Element-wise log prob for each component in x """
         p = core.as_node(p)
         l = x * p + (1 - x) * (1 - p)
         return l
-
     def sample(self, p, shape=None, numeric=False):
+        """ Element-wise sampling for each component of p """
         # TODO_TZ  maybe cgt has mechanism to eval an expr
         if not numeric:
             p = core.as_node(p)
@@ -37,8 +42,7 @@ class _Bernoulli(Distribution):
             return cgt.rand(*shape) <= p
         else:
             assert isinstance(p, np.ndarray)
-            return np.array(np.random.rand(*p.shape) <= p, dtype="i2")
-
+            return np.array(nr.rand(*p.shape) <= p, dtype="i2")
 bernoulli = _Bernoulli()
 
 class _Categorical(Distribution):
