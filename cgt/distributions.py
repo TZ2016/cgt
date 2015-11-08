@@ -45,6 +45,28 @@ class _Bernoulli(Distribution):
             return np.array(nr.rand(*p.shape) <= p, dtype="i2")
 bernoulli = _Bernoulli()
 
+class _DiagonalGaussian(Distribution):
+    def logprob(self, x, mu, sigma):
+        # TODO_TZ should support batch operation
+        assert sigma.ndim == mu.ndim == x.ndim == 1
+        assert sigma.shape[0] == x.shape[0] == mu.shape[0]
+        k = sigma.shape[0]
+        det = cgt.prod(sigma)
+        prob_z = - (k * np.log(2. * np.pi) + np.log(det)) / 2.
+        prob_e = - sigma * (x - mu) * (x - mu) / 2.
+        return prob_z + prob_e
+    def sample(self, mu, sigma, shape=None, numeric=False):
+        Sigma = np.diag(sigma)
+        return nr.multivariate_normal(mu, Sigma)
+gaussian_diagonal = _DiagonalGaussian()
+
+class _IsotropicGaussian(Distribution):
+    def logprob(self, x, p):
+        pass
+    def sample(self, p, shape=None, numeric=False):
+        pass
+gaussian_isotropic = _IsotropicGaussian()
+
 class _Categorical(Distribution):
     def crossent(self, p, q):
         assert p.ndim==2 and q.ndim==2
@@ -52,9 +74,6 @@ class _Categorical(Distribution):
     def loglik(self, labels, p):
         return cgt.log(p[cgt.arange(cgt.size(labels,0)),labels])
 categorical = _Categorical()
-
-class _DiagonalGaussian(Distribution):
-    pass
 
 class Product(Distribution):    
     r"""
