@@ -1563,8 +1563,8 @@ class DistrOp(Op):
     def typ_apply(self, parents):
         return self.info.typ_apply(*parents)
     def get_diff(self, num_inputs):
-        # logically should return true; if called, trigger exception in pullback
-        return [True] * num_inputs
+        # caveat! returning False may belie a stochastic graph
+        return [False] * num_inputs
     def pullback(self, inputs, output, goutput):
         raise NonDifferentiable("First convert to deterministic graph")
     def get_py_func(self, input_types):
