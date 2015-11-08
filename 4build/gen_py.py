@@ -29,8 +29,8 @@ def {npname}(x, y):
         fh.write(
 """
 def {npname}({params}):
-    "Sample from distribution {npname}"
+    "Sample from distribution {repr}"
     return core.distr("{infixname}", {params})
-""".format(params=", ".join(info.params), npname=info.short, infixname=infixname))
+""".format(params=", ".join(info.params), repr=info.repr, npname=info.short, infixname=infixname))
 
 

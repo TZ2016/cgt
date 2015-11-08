@@ -1509,11 +1509,12 @@ def elwise_binary(opname, x, y):
 
 # Stochastic
 # ----------------------------------------------------------------
-from .distributions import bernoulli
+from .distributions import bernoulli, gaussian_diagonal
 
 DistrInfo = namedtuple(
     "DistrInfo",
-    ("short",
+    ("short",  # method name for api_autogen.py
+     "repr",  # for display
      "params",  # name of params
      "distr",
      "shp_apply",  # shape of output given params
@@ -1524,11 +1525,19 @@ DistrInfo = namedtuple(
 DISTR_INFO = {
     "Bernoulli": DistrInfo(
         # TODO_TZ  missing cexpr
-        "Ber(p)", ("p",), bernoulli,
+        "bernoulli", "Ber(p)",
+        ("p",), bernoulli,
         lambda p: cgt.shape(p),
-        lambda p: TensorType("f8", p.ndim),
+        lambda p: TensorType("f8", p.ndim),  # though i1 is more appropriate
         "todo"
     ),
+    "DiagonalGaussian": DistrInfo(
+        "norm_diag", "DiagNorm(mu,sigma)",
+        ("mu", "sigma"), gaussian_diagonal,
+        lambda mu, sigma: cgt.shape(mu),
+        lambda mu, sigma: TensorType("f8", mu.ndim),
+        "todo"
+    )
     # "binom":
     # "norm":
 }
@@ -1544,7 +1553,7 @@ class DistrOp(Op):
         self.info = DISTR_INFO[distr_name] if info is None else info
         self.distr = self.info.distr
     def __repr__(self):
-        return self.info.short
+        return self.info.repr
     def get_name(self):
         return self.distr_name
     def get_hash(self):

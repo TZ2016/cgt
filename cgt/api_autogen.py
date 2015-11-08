@@ -106,5 +106,9 @@ def subtract(x, y):
     return core.elwise_binary("-", x,y)
     
 def bernoulli(p):
-    "Sample from distribution bernoulli"
+    "Sample from distribution Ber(p)"
     return core.distr("Bernoulli", p)
+
+def norm_diag(mu, sigma):
+    "Sample from distribution DiagNorm(mu,sigma)"
+    return core.distr("DiagonalGaussian", mu, sigma)
