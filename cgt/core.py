@@ -2333,7 +2333,9 @@ class Mul22(Op):
             x,y = reads
             if self.tA: x = x.T
             if self.tB: y = y.T
-            x.dot(y, out=write)
+            # FIXME x.shape=[1], y.shape=[1,4], x.dot(y) has shape=[4] not [1,4]
+            write[:] = x.dot(y)
+            # x.dot(y, out=write)
         return f
     def pullback(self, inputs, output, goutput):
         """
