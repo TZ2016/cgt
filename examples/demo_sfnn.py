@@ -85,9 +85,10 @@ def make_funcs(net_in, net_out, **kwargs):
     # loss = cgt.sum((net_out - Y) ** 2) / size_batch
     # loglik of data
     size_out = Y.shape[1]
-    out_sigma = cgt.exp(net_out[:, :size_out]) + 1.e-6  # positive sigma
+    # out_sigma = cgt.exp(net_out[:, :size_out]) + 1.e-6  # positive sigma
     loss = -gaussian_diagonal.loglik(
-        Y, net_out[:, :size_out], out_sigma
+        Y, net_out[:, :size_out],
+        cgt.constant(np.array([[0.01]]))
     ) / size_batch
     params = nn.get_parameters(loss)
     if kwargs.has_key('no_bias'):
@@ -136,12 +137,12 @@ if __name__ == "__main__":
     #######################
     args_synthetic = Table(
         num_inputs=1,
-        num_outputs=2,
+        num_outputs=1,
         num_units=[4, 5, 5, 4],
         num_sto=[0, 2, 2, 0],
         no_bias=False,
         n_epochs=10,
-        step_size=.01,
+        step_size=.1,
     )
     X_syn, Y_syn = data_synthetic_a(1000)
     def syn_dbg_epoch(i_epoch, param_col, f_surr):
@@ -157,8 +158,15 @@ if __name__ == "__main__":
         # print "bernoulli param"
         # pprint.pprint( _ber_param)
         pprint.pprint(_params_val)
+        # sample the network to track progress
+        s_X, s_Y_mu, s_Y_var = np.random.uniform(0., 1., 1000), [], []
+        for x in s_X:
+            info = f_surr([[x]], [[0.]])
+            s_Y_mu.append(info['net_out'][0][0][0])
+            # s_Y_var.append(info['net_out'][0][0][1])
+        plt.scatter(s_X, s_Y_mu)
     def syn_dbg_iter(i_epoch, i_iter, optim_state, info):
-        print np.linalg.norm(optim_state.theta)
+        print np.linalg.norm(optim_state.grad)
     train(args_synthetic, X_syn, Y_syn, syn_dbg_epoch, syn_dbg_iter)
 
     # X, Y = generate_examples(10, np.array([3.]), np.array([0.]), [.1])
