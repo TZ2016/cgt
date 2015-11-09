@@ -11,20 +11,13 @@ from param_collection import ParamCollection
 from cgt.distributions import gaussian_diagonal
 from demo_char_rnn import make_rmsprop_state, rmsprop_update, Table
 
-EXAMPLES_ARGS = Table(
-    # example generation
-    num_examples=10,
-    x=np.array([3.]),
-    y=np.array([0.]),
-    truth_ratio=[.1],
-)
 
 DEFAULT_ARGS = Table(
     # network
-    num_inputs=EXAMPLES_ARGS.x.size,
-    num_outputs=EXAMPLES_ARGS.y.size,
-    num_units=[2],
-    num_sto=[1],
+    num_inputs=1,
+    num_outputs=1,
+    num_units=[4, 5, 5, 4],
+    num_sto=[0, 2, 2, 0],
     no_bias=False,
     # training
     n_epochs=50,
@@ -41,6 +34,14 @@ def generate_examples(N, x, y, p_y):
             Y[:, i] = 0.
             Y[:, i][:int(N*p)] = 1.
     np.random.shuffle(Y)
+    return X, Y
+
+
+def data_synthetic_a(N):
+    # y = x + 0.3 sin(2 * pi * x) + e, e ~ Unif(-0.1, 0.1)
+    X = np.random.uniform(0., 1., N)
+    Y = X + 0.3 * np.sin(2. * X * np.pi) + np.random.uniform(-.1, .1, N)
+    X, Y = X.reshape((N, 1)), Y.reshape((N, 1))
     return X, Y
 
 
@@ -69,11 +70,11 @@ def hybrid_network(size_in, size_out, num_units, num_stos):
         prev_num_units = curr_num_units
     # TODO_TZ bigger problem! param cannot deterministically influence cost
     #         otherwise the surrogate cost is not complete log likelihood
-    # net_out = nn.Affine(prev_num_units, size_out,
-    #                     name="InnerProd(%d->%d)" % (prev_num_units, size_out)
-    #                     )(prev_out)
-    assert prev_num_units == size_out
-    net_out = prev_out
+    net_out = nn.Affine(prev_num_units, size_out,
+                        name="InnerProd(%d->%d)" % (prev_num_units, size_out)
+                        )(prev_out)
+    # assert prev_num_units == size_out
+    # net_out = prev_out
     return X, net_out
 
 
@@ -98,7 +99,7 @@ def make_funcs(net_in, net_out):
     f_loss = cgt.function([net_in, Y], [net_out, loss])
     # grad func
     f_surr = get_surrogate_func([net_in, Y], [net_out], loss, params)
-    return params, f_step, f_loss, f_grad
+    return params, f_step, f_loss, f_grad, f_surr
 
 
 def nice_print(X, Y, func):
@@ -133,18 +134,17 @@ def main():
 
     net_in, net_out = hybrid_network(args.num_inputs, 2*args.num_outputs,
                                      args.num_units, args.num_sto)
-    params, f_step, f_loss, f_grad = make_funcs(net_in, net_out)
+    params, f_step, f_loss, f_grad, f_surr = make_funcs(net_in, net_out)
     param_col = ParamCollection(params)
     param_col.set_value_flat(
-        np.random.uniform(2., 2., size=(param_col.get_total_size(),))
+        np.random.uniform(-.1, .1, size=(param_col.get_total_size(),))
     )
     optim_state = make_rmsprop_state(theta=param_col.get_value_flat(),
                                      step_size=args.step_size,
                                      decay_rate=args.decay_rate)
 
-    X, Y = generate_examples(EXAMPLES_ARGS.num_examples,
-                             EXAMPLES_ARGS.x, EXAMPLES_ARGS.y,
-                             EXAMPLES_ARGS.truth_ratio)
+    # X, Y = generate_examples(10, np.array([3.]), np.array([0.]), [.1])
+    X, Y = data_synthetic_a(1000)
 
     # X1, Y1 = generate_examples(10,
     #                            np.array([3.]), np.array([0]),
@@ -163,23 +163,27 @@ def main():
     for i_epoch in range(args.n_epochs):
         for j in range(X.shape[0]):
             x, y = X[j:j+1], Y[j:j+1]
-            loss, loss_surr, grad = f_grad(x, y)
+            info = f_surr(x, y)
+            loss, loss_surr, grad = info['loss'], info['surr_loss'], info['surr_grad']
+            # loss, loss_surr, grad = f_grad(x, y)
+
             all_loss.append(np.sum(loss))
             all_surr_loss.append(loss_surr)
             # update
             grad = param_col.flatten_values(grad)
-            rmsprop_update(grad, optim_state)
+            # rmsprop_update(grad, optim_state)
+            optim_state.theta -= optim_state.step_size * grad
             param_col.set_value_flat(optim_state.theta)
             # print
             _params_val =  param_col.get_values()
-            _ber_param = _params_val[0].T.dot(EXAMPLES_ARGS.x)
-            if not args.no_bias: _ber_param += _params_val[1].flatten()
-            _ber_param = sigmoid(_ber_param)
+            # _ber_param = _params_val[0].T.dot(EXAMPLES_ARGS.x)
+            # if not args.no_bias: _ber_param += _params_val[1].flatten()
+            # _ber_param = sigmoid(_ber_param)
             print ""
             print "network params"
             pprint.pprint(_params_val)
-            print "bernoulli param"
-            pprint.pprint( _ber_param)
+            # print "bernoulli param"
+            # pprint.pprint( _ber_param)
     all_loss, all_surr_loss = np.array(all_loss), np.array(all_surr_loss)
     plt.plot(np.convolve(all_loss, [1. / X.shape[0]] * X.shape[0], 'same'))
     plt.plot(np.convolve(all_surr_loss, [1. / X.shape[0]] * X.shape[0], 'same'))
