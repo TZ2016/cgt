@@ -6,11 +6,20 @@ import matplotlib.pyplot as plt
 from cgt.core import get_surrogate_func
 from cgt import nn
 import numpy as np
+import traceback
 from scipy.special import expit as sigmoid
 from param_collection import ParamCollection
 from cgt.distributions import gaussian_diagonal
 from demo_char_rnn import make_rmsprop_state, rmsprop_update, Table
 
+def err_handler(type, flag):
+    print "OH NOOOO!"
+    print type, flag
+    traceback.print_exc()
+    # raise FloatingPointError('refer to err_handler for more details')
+
+np.seterr(all='call')
+np.seterrcall(err_handler)
 
 DEFAULT_ARGS = Table(
     # network
@@ -20,7 +29,7 @@ DEFAULT_ARGS = Table(
     num_sto=[0, 2, 2, 0],
     no_bias=False,
     # training
-    n_epochs=50,
+    n_epochs=10,
     step_size=.01,
     decay_rate=.95,
 )
@@ -166,24 +175,26 @@ def main():
             info = f_surr(x, y)
             loss, loss_surr, grad = info['loss'], info['surr_loss'], info['surr_grad']
             # loss, loss_surr, grad = f_grad(x, y)
-
             all_loss.append(np.sum(loss))
             all_surr_loss.append(loss_surr)
             # update
             grad = param_col.flatten_values(grad)
             # rmsprop_update(grad, optim_state)
             optim_state.theta -= optim_state.step_size * grad
+            print np.linalg.norm(grad)
             param_col.set_value_flat(optim_state.theta)
-            # print
-            _params_val =  param_col.get_values()
-            # _ber_param = _params_val[0].T.dot(EXAMPLES_ARGS.x)
-            # if not args.no_bias: _ber_param += _params_val[1].flatten()
-            # _ber_param = sigmoid(_ber_param)
-            print ""
-            print "network params"
-            pprint.pprint(_params_val)
-            # print "bernoulli param"
-            # pprint.pprint( _ber_param)
+        print "Epoch %d" % i_epoch
+        print "network parameters"
+        _params_val =  param_col.get_values()
+        # _ber_param = _params_val[0].T.dot(EXAMPLES_ARGS.x)
+        # if not args.no_bias: _ber_param += _params_val[1].flatten()
+        # _ber_param = sigmoid(_ber_param)
+        # print ""
+        # print "network params"
+        # pprint.pprint(_params_val)
+        # print "bernoulli param"
+        # pprint.pprint( _ber_param)
+        pprint.pprint(_params_val)
     all_loss, all_surr_loss = np.array(all_loss), np.array(all_surr_loss)
     plt.plot(np.convolve(all_loss, [1. / X.shape[0]] * X.shape[0], 'same'))
     plt.plot(np.convolve(all_surr_loss, [1. / X.shape[0]] * X.shape[0], 'same'))
