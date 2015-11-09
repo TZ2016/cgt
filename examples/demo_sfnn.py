@@ -47,10 +47,10 @@ def generate_examples(N, x, y, p_y):
 
 
 def data_synthetic_a(N):
-    # y = x + 0.3 sin(2 * pi * x) + e, e ~ Unif(-0.1, 0.1)
-    X = np.random.uniform(0., 1., N)
-    Y = X + 0.3 * np.sin(2. * X * np.pi) + np.random.uniform(-.1, .1, N)
-    X, Y = X.reshape((N, 1)), Y.reshape((N, 1))
+    # x = y + 0.3 sin(2 * pi * y) + e, e ~ Unif(-0.1, 0.1)
+    Y = np.random.uniform(0., 1., N)
+    X = Y + 0.3 * np.sin(2. * Y * np.pi) + np.random.uniform(-.1, .1, N)
+    Y, X = Y.reshape((N, 1)), X.reshape((N, 1))
     return X, Y
 
 
@@ -99,8 +99,9 @@ def make_funcs(net_in, net_out):
     # loss = cgt.sum((net_out - Y) ** 2) / size_batch
     # loglik of data
     size_out = Y.shape[1]
+    out_sigma = cgt.exp(net_out[:, :size_out]) + 1.e-6  # positive sigma
     loss = -gaussian_diagonal.loglik(
-        Y, net_out[:, :size_out], net_out[:, size_out:]
+        Y, net_out[:, :size_out], out_sigma
     ) / size_batch
     params = nn.get_parameters(loss)
     if DEFAULT_ARGS.no_bias:
