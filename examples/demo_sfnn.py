@@ -8,6 +8,7 @@ from cgt import nn
 import numpy as np
 from scipy.special import expit as sigmoid
 from param_collection import ParamCollection
+from cgt.distributions import gaussian_diagonal
 from demo_char_rnn import make_rmsprop_state, rmsprop_update, Table
 
 EXAMPLES_ARGS = Table(
@@ -22,7 +23,7 @@ DEFAULT_ARGS = Table(
     # network
     num_inputs=EXAMPLES_ARGS.x.size,
     num_outputs=EXAMPLES_ARGS.y.size,
-    num_units=[1],
+    num_units=[2],
     num_sto=[1],
     no_bias=False,
     # training
@@ -80,17 +81,20 @@ def make_funcs(net_in, net_out):
     def f_grad (*x):
         out = f_surr(*x)
         return out['loss'], out['surr_loss'], out['surr_grad']
+    Y = cgt.matrix("Y")
     size_batch = net_in.shape[0]
     # step func
     f_step = cgt.function([net_in], [net_out])
-    # loss func
-    Y = cgt.matrix("Y")
-    # loss = cgt.sum(cgt.norm(net_out - Y, axis=1)) / size_batch
-    loss = cgt.sum((net_out - Y) ** 2) / size_batch
+    # square loss
+    # loss = cgt.sum((net_out - Y) ** 2) / size_batch
+    # loglik of data
+    size_out = Y.shape[1]
+    loss = -gaussian_diagonal.loglik(
+        Y, net_out[:, :size_out], net_out[:, size_out:]
+    ) / size_batch
     params = nn.get_parameters(loss)
     if DEFAULT_ARGS.no_bias:
         params = [p for p in params if not p.name.endswith(".b")]
-    # loss = cgt.sum(net_out - Y)  # this is for debugging use
     f_loss = cgt.function([net_in, Y], [net_out, loss])
     # grad func
     f_surr = get_surrogate_func([net_in, Y], [net_out], loss, params)
@@ -127,7 +131,8 @@ def main():
     # And pure stochastic layer
     # --num_inputs 1 --num_units 3 2 --num_sto 2 2
 
-    net_in, net_out = hybrid_network(args.num_inputs, args.num_outputs, args.num_units, args.num_sto)
+    net_in, net_out = hybrid_network(args.num_inputs, 2*args.num_outputs,
+                                     args.num_units, args.num_sto)
     params, f_step, f_loss, f_grad = make_funcs(net_in, net_out)
     param_col = ParamCollection(params)
     param_col.set_value_flat(

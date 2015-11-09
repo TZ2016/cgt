@@ -46,13 +46,17 @@ class _Bernoulli(Distribution):
 bernoulli = _Bernoulli()
 
 class _DiagonalGaussian(Distribution):
+    def loglik(self, x, mu, sigma):
+        return cgt.sum(self.logprob(x, mu, sigma))
     def logprob(self, x, mu, sigma):
         # TODO_TZ should support batch operation
-        assert sigma.ndim == mu.ndim == x.ndim == 1
-        assert sigma.shape[0] == x.shape[0] == mu.shape[0]
+        assert sigma.ndim == mu.ndim == x.ndim == 2
+        # assert sigma.shape[0] == x.shape[0] == mu.shape[0]
+        # assert sigma.shape[1] == x.shape[1] == mu.shape[1]
+        x, mu, sigma = x[0], mu[0], sigma[0]
         k = sigma.shape[0]
         det = cgt.prod(sigma)
-        prob_z = - (k * np.log(2. * np.pi) + np.log(det)) / 2.
+        prob_z = - (k * np.log(2. * np.pi) + cgt.log(det)) / 2.
         prob_e = - sigma * (x - mu) * (x - mu) / 2.
         return prob_z + prob_e
     def sample(self, mu, sigma, shape=None, numeric=False):
