@@ -49,19 +49,18 @@ class _DiagonalGaussian(Distribution):
     def loglik(self, x, mu, sigma):
         return cgt.sum(self.logprob(x, mu, sigma))
     def logprob(self, x, mu, sigma):
-        # TODO_TZ should support batch operation
+        """ Calculate logprob for each row of x, mu, sigma """
         assert sigma.ndim == mu.ndim == x.ndim == 2
-        # assert sigma.shape[0] == x.shape[0] == mu.shape[0]
-        # assert sigma.shape[1] == x.shape[1] == mu.shape[1]
-        x, mu, sigma = x[0], mu[0], sigma[0]
-        k = sigma.shape[0]
-        det = cgt.prod(sigma)
-        prob_z = - (k * np.log(2. * np.pi) + cgt.log(det)) / 2.
-        prob_e = - sigma * (x - mu) * (x - mu) / 2.
+        k = x.shape[1]
+        log_det = cgt.sum(cgt.log(sigma), axis=1, keepdims=True)
+        prob_z = - (k * np.log(2. * np.pi) + log_det) / 2.
+        prob_e = - cgt.sum(sigma * (x - mu) * (x - mu) / 2., axis=1, keepdims=True)
+        # output shape: (size_batch, 1)
         return prob_z + prob_e
     def sample(self, mu, sigma, shape=None, numeric=False):
-        Sigma = np.diag(sigma)
-        return nr.multivariate_normal(mu, Sigma)
+        # Sigma = np.diag(sigma)
+        # return nr.multivariate_normal(mu, Sigma)
+        raise NotImplementedError
 gaussian_diagonal = _DiagonalGaussian()
 
 class _IsotropicGaussian(Distribution):
