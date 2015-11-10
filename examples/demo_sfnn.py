@@ -40,6 +40,14 @@ def data_synthetic_a(N):
     return X, Y
 
 
+def data_simple(N):
+    X = np.random.uniform(0., 1., N)
+    Y = X + np.random.uniform(-.1, .1, N)
+    # Y += np.random.binomial(1, 0.5, N)
+    Y, X = Y.reshape((N, 1)), X.reshape((N, 1))
+    return X, Y
+
+
 def hybrid_layer(X, size_in, size_out, size_random):
     assert size_out >= size_random >= 0
     out = cgt.sigmoid(nn.Affine(
@@ -83,14 +91,13 @@ def make_funcs(net_in, net_out, **kwargs):
     # loss_raw of shape (size_batch, 1); loss should be a scalar
     # sum-of-squares loss
     loss_raw = cgt.sum((net_out - Y) ** 2, axis=1, keepdims=True)
-    loss = cgt.sum(loss_raw) / size_batch
     # negative log-likelihood
-    # out_sigma = cgt.exp(net_out[:, :size_out]) + 1.e-6  # positive sigma
+    # out_sigma = cgt.exp(net_out[:, size_out:]) + 1.e-6  # positive sigma
     # loss_raw = -gaussian_diagonal.logprob(
     #     Y, net_out[:, :size_out],
-    #     cgt.constant(np.array([[0.01]]))
+    #     out_sigma  # cgt.fill(.01, [size_batch, 1])
     # )
-    # loss = cgt.sum(loss_raw) / size_batch
+    loss = cgt.sum(loss_raw) / size_batch
     # end of loss definition
     params = nn.get_parameters(loss)
     if kwargs.has_key('no_bias'):
@@ -100,7 +107,7 @@ def make_funcs(net_in, net_out, **kwargs):
     return params, f_step, f_loss, f_grad, f_surr
 
 
-def train(args, X, Y, dbg_epoch=None, dbg_iter=None):
+def train(args, X, Y, dbg_iter=None, dbg_epoch=None, dbg_done=None):
     net_in, net_out = hybrid_network(args.num_inputs, args.num_outputs,
                                      args.num_units, args.num_sto)
     params, f_step, f_loss, f_grad, f_surr = make_funcs(net_in, net_out)
@@ -127,26 +134,21 @@ def train(args, X, Y, dbg_epoch=None, dbg_iter=None):
             param_col.set_value_flat(optim_state.theta)
             if dbg_iter: dbg_iter(i_epoch, i_iter, optim_state, info)
         if dbg_epoch: dbg_epoch(i_epoch, param_col, f_surr)
+    if dbg_done: dbg_done()
     all_loss, all_surr_loss = np.array(all_loss), np.array(all_surr_loss)
     plt.plot(np.convolve(all_loss, [1. / X.shape[0]] * X.shape[0], 'same'))
     plt.plot(np.convolve(all_surr_loss, [1. / X.shape[0]] * X.shape[0], 'same'))
 
 
-if __name__ == "__main__":
-    #################3#####
-    #  for synthetic data #
-    #######################
-    args_synthetic = Table(
-        num_inputs=1,
-        num_outputs=1,
-        num_units=[4, 5, 5, 4],
-        num_sto=[0, 2, 2, 0],
-        no_bias=False,
-        n_epochs=10,
-        step_size=.1,
-    )
-    X_syn, Y_syn = data_synthetic_a(1000)
-    def syn_dbg_epoch(i_epoch, param_col, f_surr):
+def example_debug():
+    plt_markers = ['x', 'o', 'v', 's', '+', '*']
+    plt_colors = ['b', 'g', 'r', 'c', 'm', 'y', 'k']
+    plt_kwargs = [{'marker': m, 'color': c, 's': 10}
+                  for m in plt_markers for c in plt_colors]
+    plots_epoch = []
+    def dbg_iter(i_epoch, i_iter, optim_state, info):
+        print np.linalg.norm(optim_state.grad)
+    def dbg_epoch(i_epoch, param_col, f_surr):
         print "Epoch %d" % i_epoch
         print "network parameters"
         _params_val = param_col.get_values()
@@ -160,13 +162,34 @@ if __name__ == "__main__":
         # pprint.pprint( _ber_param)
         pprint.pprint(_params_val)
         # sample the network to track progress
-        s_X = np.random.uniform(0., 1., (1000, 1))
-        info = f_surr(s_X, np.zeros((1000, 1)), no_sample=True)
-        s_Y_mu = info['net_out'][0]
-        plt.scatter(s_X.flatten(), s_Y_mu.flatten())
-    def syn_dbg_iter(i_epoch, i_iter, optim_state, info):
-        print np.linalg.norm(optim_state.grad)
-    train(args_synthetic, X_syn, Y_syn, syn_dbg_epoch, syn_dbg_iter)
+        size_sample = 50
+        s_X = np.random.uniform(0., 1., (size_sample, 1))
+        info = f_surr(s_X, np.zeros((size_sample, 1)), no_sample=True)
+        s_Y = info['net_out'][0]
+        plot = plt.scatter(s_X.flatten(), s_Y.flatten(), **plt_kwargs[i_epoch])
+        # s_Y_mu, s_Y_var = s_Y[:, 0], np.exp(s_Y[:, 1]) + 1.e-6
+        # plt.scatter(s_X.flatten(), s_Y_mu.flatten())
+        plots_epoch.append(plot)
+    def dbg_done():
+        plt.legend(plots_epoch, range(len(plots_epoch)), scatterpoints=1, fontsize=6)
+        plt.savefig('tmp.png')
+    return {'dbg_iter': dbg_iter, 'dbg_epoch': dbg_epoch, 'dbg_done': dbg_done}
+
+if __name__ == "__main__":
+    #################3#####
+    #  for synthetic data #
+    #######################
+    args_synthetic = Table(
+        num_inputs=1,
+        num_outputs=1,
+        num_units=[1, ],
+        num_sto=[0, ],
+        no_bias=False,
+        n_epochs=10,
+        step_size=.1,
+    )
+    X_syn, Y_syn = data_simple(100)
+    train(args_synthetic, X_syn, Y_syn, **example_debug())
 
     # X, Y = generate_examples(10, np.array([3.]), np.array([0.]), [.1])
     # X1, Y1 = generate_examples(10,
