@@ -1,4 +1,5 @@
 import sys, numpy as np, hashlib, copy, cPickle, ctypes, os, os.path as osp
+import warnings
 from collections import defaultdict,namedtuple
 import __builtin__
 import traceback
@@ -798,6 +799,8 @@ def _get_surr_costs(costs):
     args_rand = {mappings_inv[k]: v for k, v in rand_vals.iteritems()}
     args_cost = {mappings_inv[k]: v for k, v in cost_vals.iteritems()}
     # shape: (size_batch, 1), (size_batch, 1), (size_batch, size_sto)
+    if not args_rand:
+        warnings.warn('Conversion on already deterministic graph')
     return total_surr_costs, args_cost, args_rand
 
 def get_surrogate_func(inputs, outputs, costs, wrt, num_samples):
@@ -806,6 +809,8 @@ def get_surrogate_func(inputs, outputs, costs, wrt, num_samples):
         if not kwargs.pop('no_sample', False):
             assert np.all([_i.shape[0] == 1 for _i in _inputs])
             m = kwargs.pop('num_samples', num_samples)
+            if m > 1 and not args_rand:
+                warnings.warn('Sample multiple times on a deterministic graph')
             _inputs = [np.repeat(_i, m, axis=0) for _i in _inputs]
         _out = f_sample(*_inputs)
         net_out, sample = _out[:len(outputs)], _out[len(outputs):]
