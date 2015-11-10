@@ -752,8 +752,7 @@ def _merge_costs(costs):
     assert isinstance(costs, list) and len(costs) > 0
     total_cost = []
     for cost in costs:
-        if cost.ndim > 0: cost = cgt.sum(cost)
-        total_cost.append(cost)
+        total_cost.append(cgt.sum(cost, axis=1, keepdims=True))
     if len(total_cost) > 1:
         total_cost = [cgt.add_multi(total_cost)]
     return total_cost[0]
@@ -768,9 +767,7 @@ def _get_surr_costs(costs):
     assume their sampled values.
     """
     if isinstance(costs, Node): costs = [costs]
-    # TODO_TZ  either require that costs returns shape (num_sample, ...) or
-    #          sample one at a time  (assume the latter)
-    # with the current impl, does not help to supply batch > 1
+    assert np.all([c.ndim == 2 for c in costs]), "cost of shape (size_batch,1)"
     costs = _decompose_costs(costs)
     mappings = {}  # map from original node to cloned ones
     costs = clone(costs, mappings=mappings)
@@ -779,74 +776,66 @@ def _get_surr_costs(costs):
     cost_vals = dict(zip(costs, _as_argument(costs)))
     rand_vals = {}  # sampled values for each stochastic node
     new_costs = {}  # new surrogate costs for each stochastic node
-    curr_costs = []  # book-keeping future costs
+    curr_costs = []  # book-keeping future costs w.r.t. current traversal
     for node in reversed(all_nodes):
         if node in costs:
-            # maintain a list of future costs as of current step
             curr_costs.append(node)
         if node.is_random():
-            # should be a sum of scalars (Argument nodes)
             future_cost = cgt.add_multi([cost_vals[c] for c in curr_costs])
-            # constraint a surrogate Argument node for this node's output
             rand_val = _as_argument(node)
             # TODO_TZ error-prone, but introduce a new method in Node seems an over-kill
-            # log probability, of shape (1, size_node)
+            # log probability, of same shape as rand_val for Bernoulli
             logprob = node.op.distr.logprob(rand_val, *node.parents)
-            # surrogate cost for a group of random nodes (note: a vector!)
-            # now the new cost should have parents node.parents + argument
-            new_cost = logprob * future_cost
-            # wrap up
+            # (size_batch, size_sto) * (size_batch, 1) -> (size_batch, size_sto)
+            new_cost = cgt.broadcast('*', logprob, future_cost, 'xx,x1')
             rand_vals[node], new_costs[node] = rand_val, new_cost
+    # sever backward path involving stochastic nodes
     for node in reversed(all_nodes):
-        new_parents = []
-        for parent in node.parents:
-            if parent.is_random():
-                new_parents.append(rand_vals[parent])
-            else:
-                new_parents.append(parent)
-        # sever the path to stochastic nodes, use their output value instead
-        # TODO_TZ not sure this is permissible
-        node.parents = new_parents
-    # process returns
+        # TODO_TZ directly re-assign parents may not be good
+        node.parents = [rand_vals[p] if p.is_random() else p for p in node.parents]
     # TODO_TZ maybe some old costs are dangling, remove them
     total_surr_costs = _merge_costs(costs + new_costs.values())
     args_rand = {mappings_inv[k]: v for k, v in rand_vals.iteritems()}
     args_cost = {mappings_inv[k]: v for k, v in cost_vals.iteritems()}
+    # shape: (size_batch, 1), (size_batch, 1), (size_batch, size_sto)
     return total_surr_costs, args_cost, args_rand
 
-def get_surrogate_func(inputs, outputs, costs, wrt):
-    # also helps to get additional output
-    def surr_func_wrapper(*_inputs):
+def get_surrogate_func(inputs, outputs, costs, wrt, num_samples):
+    def surr_func_wrapper(*_inputs, **kwargs):
         """Given real-valued inputs, return outputs using sampled values """
-        _outputs = f_sample(*_inputs)
-        net_out, sample = _outputs[:len(outputs)], _outputs[len(outputs):]
+        if not kwargs.pop('no_sample', False):
+            assert np.all([_i.shape[0] == 1 for _i in _inputs])
+            m = kwargs.pop('num_samples', num_samples)
+            _inputs = [np.repeat(_i, m, axis=0) for _i in _inputs]
+        _out = f_sample(*_inputs)
+        net_out, sample = _out[:len(outputs)], _out[len(outputs):]
         s_rand, s_loss = sample[:len(args_rand.keys())], sample[len(args_rand.keys()):]
-        _outputs = f_surr(*(_inputs + tuple(sample)))
-        surr_loss, surr_grad = _outputs[0], _outputs[1:]
+        _out = f_surr(*(list(_inputs) + sample))
+        surr_loss, surr_loss_raw, surr_grad = _out[0], _out[1], _out[2:]
         # TODO_TZ this is ugly, fix this
         return {
-            # list of original loss (list of 0-dim ndarray)
-            'loss': s_loss,
-            # a single 0-dim ndarray
+            # scalar; importance weighted mean of surrogate loss to minimize
             'surr_loss': surr_loss,
-            # list of matrices of size (1, dim) for each param
+            # (num_samples, 1); surrogate loss for each sample
+            'surr_loss_raw': surr_loss_raw,
+            # (num_samples, 1); original loss for each sample
+            'loss': s_loss,
+            # list[shape(param)]; gradient of each param
             'surr_grad': surr_grad,
-            # list of matrices of size (batch, dim) for each stochastic node
+            # list[(num_samples, size_sto)]; samples for each stochastic unit
             'sample': s_rand,
-            # list of matrices of size (batch, dim) for each output
+            # list[(num_samples, size_out)]; outputs of original net
             'net_out': net_out
         }
     assert isinstance(inputs, list) and isinstance(outputs, list)
-    surr_costs, args_cost, args_rand = _get_surr_costs(costs)
+    surr_cost_raw, args_cost, args_rand = _get_surr_costs(costs)
+    # TODO_TZ importance sampling weights go below
+    surr_costs = cgt.mean(surr_cost_raw)
     grad_surr = grad(surr_costs, wrt)
-    # source nodes of the new args
-    src_nodes = args_rand.keys() + args_cost.keys()
-    # this function samples the stochastic graph
-    f_sample = cgt.function(inputs, outputs + src_nodes)
-    # original plus additional args for gradient backprop
-    all_args = inputs + args_rand.values() + args_cost.values()
-    # this function, given the sampled values, return surrogate loss and grad
-    f_surr = cgt.function(all_args, [surr_costs] + grad_surr)
+    f_sample = cgt.function(inputs,
+                            outputs + args_rand.keys() + args_cost.keys())
+    f_surr = cgt.function(inputs + args_rand.values() + args_cost.values(),
+                          [surr_costs, surr_cost_raw] + grad_surr)
     return surr_func_wrapper
 
 # ================================================================
