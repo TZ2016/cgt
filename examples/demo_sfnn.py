@@ -10,7 +10,7 @@ import traceback
 from scipy.special import expit as sigmoid
 from param_collection import ParamCollection
 from cgt.distributions import gaussian_diagonal
-from demo_char_rnn import make_rmsprop_state, Table
+from demo_char_rnn import Table
 
 
 def err_handler(type, flag):
@@ -78,24 +78,25 @@ def make_funcs(net_in, net_out, **kwargs):
         out = f_surr(*x)
         return out['loss'], out['surr_loss'], out['surr_grad']
     Y = cgt.matrix("Y")
-    size_batch = net_in.shape[0]
-    # step func
+    size_out, size_batch = Y.shape[1], net_in.shape[0]
     f_step = cgt.function([net_in], [net_out])
-    # square loss
-    # loss = cgt.sum((net_out - Y) ** 2) / size_batch
-    # loglik of data
-    size_out = Y.shape[1]
+    # loss_raw of shape (size_batch, 1); loss should be a scalar
+    # sum-of-squares loss
+    loss_raw = cgt.sum((net_out - Y) ** 2, axis=1, keepdims=True)
+    loss = cgt.sum(loss_raw) / size_batch
+    # negative log-likelihood
     # out_sigma = cgt.exp(net_out[:, :size_out]) + 1.e-6  # positive sigma
-    loss = -gaussian_diagonal.loglik(
-        Y, net_out[:, :size_out],
-        cgt.constant(np.array([[0.01]]))
-    ) / size_batch
+    # loss_raw = -gaussian_diagonal.logprob(
+    #     Y, net_out[:, :size_out],
+    #     cgt.constant(np.array([[0.01]]))
+    # )
+    # loss = cgt.sum(loss_raw) / size_batch
+    # end of loss definition
     params = nn.get_parameters(loss)
     if kwargs.has_key('no_bias'):
         params = [p for p in params if not p.name.endswith(".b")]
     f_loss = cgt.function([net_in, Y], [net_out, loss])
-    # grad func
-    f_surr = get_surrogate_func([net_in, Y], [net_out], loss, params)
+    f_surr = get_surrogate_func([net_in, Y], [net_out], loss_raw, params, 40)
     return params, f_step, f_loss, f_grad, f_surr
 
 
@@ -159,12 +160,10 @@ if __name__ == "__main__":
         # pprint.pprint( _ber_param)
         pprint.pprint(_params_val)
         # sample the network to track progress
-        s_X, s_Y_mu, s_Y_var = np.random.uniform(0., 1., 1000), [], []
-        for x in s_X:
-            info = f_surr([[x]], [[0.]])
-            s_Y_mu.append(info['net_out'][0][0][0])
-            # s_Y_var.append(info['net_out'][0][0][1])
-        plt.scatter(s_X, s_Y_mu)
+        s_X = np.random.uniform(0., 1., (1000, 1))
+        info = f_surr(s_X, np.zeros((1000, 1)), no_sample=True)
+        s_Y_mu = info['net_out'][0]
+        plt.scatter(s_X.flatten(), s_Y_mu.flatten())
     def syn_dbg_iter(i_epoch, i_iter, optim_state, info):
         print np.linalg.norm(optim_state.grad)
     train(args_synthetic, X_syn, Y_syn, syn_dbg_epoch, syn_dbg_iter)
