@@ -145,7 +145,8 @@ def example_debug():
     plt_colors = ['b', 'g', 'r', 'c', 'm', 'y', 'k']
     plt_kwargs = [{'marker': m, 'color': c, 's': 10}
                   for m in plt_markers for c in plt_colors]
-    plots_epoch = []
+    size_sample, max_plots = 50, 10
+    ep_samples = []
     def dbg_iter(i_epoch, i_iter, optim_state, info):
         print np.linalg.norm(optim_state.grad)
     def dbg_epoch(i_epoch, param_col, f_surr):
@@ -162,16 +163,21 @@ def example_debug():
         # pprint.pprint( _ber_param)
         pprint.pprint(_params_val)
         # sample the network to track progress
-        size_sample = 50
         s_X = np.random.uniform(0., 1., (size_sample, 1))
         info = f_surr(s_X, np.zeros((size_sample, 1)), no_sample=True)
         s_Y = info['net_out'][0]
-        plot = plt.scatter(s_X.flatten(), s_Y.flatten(), **plt_kwargs[i_epoch])
+        ep_samples.append((i_epoch, s_X.flatten(), s_Y.flatten()))
+        # plot = plt.scatter(s_X.flatten(), s_Y.flatten(), **plt_kwargs[i_epoch])
         # s_Y_mu, s_Y_var = s_Y[:, 0], np.exp(s_Y[:, 1]) + 1.e-6
         # plt.scatter(s_X.flatten(), s_Y_mu.flatten())
-        plots_epoch.append(plot)
+        # ep_samples.append(plot)
     def dbg_done():
-        plt.legend(plots_epoch, range(len(plots_epoch)), scatterpoints=1, fontsize=6)
+        assert len(ep_samples) >= max_plots
+        ep_samples_split = [l[0] for l in np.array_split(np.array(ep_samples, dtype='object'), max_plots)]
+        _plots = []
+        for i, s in enumerate(ep_samples_split):
+            _plots.append(plt.scatter(*s[1:], **plt_kwargs[i]))
+        plt.legend(_plots, [l[0] for l in ep_samples_split], scatterpoints=1, fontsize=6)
         plt.savefig('tmp.png')
     return {'dbg_iter': dbg_iter, 'dbg_epoch': dbg_epoch, 'dbg_done': dbg_done}
 
@@ -185,10 +191,10 @@ if __name__ == "__main__":
         num_units=[1, ],
         num_sto=[0, ],
         no_bias=False,
-        n_epochs=10,
+        n_epochs=40,
         step_size=.1,
     )
-    X_syn, Y_syn = data_simple(100)
+    X_syn, Y_syn = data_synthetic_a(100)
     train(args_synthetic, X_syn, Y_syn, **example_debug())
 
     # X, Y = generate_examples(10, np.array([3.]), np.array([0.]), [.1])
