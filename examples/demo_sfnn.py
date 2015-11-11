@@ -9,6 +9,7 @@ from cgt import nn
 import numpy as np
 import pickle
 import traceback
+from sklearn.preprocessing import StandardScaler
 from scipy.special import expit as sigmoid
 from param_collection import ParamCollection
 from cgt.distributions import gaussian_diagonal
@@ -32,6 +33,14 @@ def generate_examples(N, x, y, p_y):
             Y[:, i][:int(N*p)] = 1.
     np.random.shuffle(Y)
     return X, Y
+
+
+def scale_data(Xs, scalars=None):
+    if not scalars:
+        scalars = [StandardScaler() for _ in range(len(Xs))]
+    assert len(scalars) == len(Xs)
+    Xs = [scalar.fit_transform(X) for X, scalar in zip(Xs, scalars)]
+    return Xs
 
 
 def data_synthetic_a(N):
@@ -89,6 +98,10 @@ def make_funcs(net_in, net_out, **kwargs):
         out = f_surr(*x)
         return out['loss'], out['surr_loss'], out['surr_grad']
     Y = cgt.matrix("Y")
+    params = nn.get_parameters(net_out)
+    if kwargs.pop('no_bias', False):
+        params = [p for p in params if not p.name.endswith(".b")]
+    params_flat = cgt.concatenate([p.flatten() for p in params])
     size_out, size_batch = Y.shape[1], net_in.shape[0]
     f_step = cgt.function([net_in], [net_out])
     # loss_raw of shape (size_batch, 1); loss should be a scalar
@@ -101,14 +114,13 @@ def make_funcs(net_in, net_out, **kwargs):
         # out_sigma
         # cgt.fill(.01, [size_batch, 1])
     # )
+    # loss_param = cgt.fill(cgt.sum(params_flat ** 2), [size_batch, 1])
     loss = cgt.sum(loss_raw) / size_batch
     # end of loss definition
-    params = nn.get_parameters(loss)
-    if kwargs.pop('no_bias', False):
-        params = [p for p in params if not p.name.endswith(".b")]
     f_loss = cgt.function([net_in, Y], [net_out, loss])
     size_sample = kwargs.pop('size_sample', 10)
-    f_surr = get_surrogate_func([net_in, Y], [net_out], loss_raw, params, size_sample)
+    f_surr = get_surrogate_func([net_in, Y], [net_out],
+                                [loss_raw], params, size_sample)
     return params, f_step, f_loss, f_grad, f_surr
 
 
@@ -236,9 +248,10 @@ if __name__ == "__main__":
         decay_rate=.95,
         size_sample=20,
         init_conf=nn.XavierNormal(scale=1.),
-        # snapshot='/Users/Tianhao/workspace/cgt/tmp/rms_norm/params.pkl',
+        # snapshot='/Users/Tianhao/workspace/cgt/tmp/rms_xavier/params.pkl',
     )
     X_syn, Y_syn = data_synthetic_a(1000)
+    X_syn, Y_syn = scale_data((X_syn, Y_syn))
     state = train(args_synthetic, X_syn, Y_syn,
                   **example_debug(args_synthetic, X_syn, DUMP_PATH))
 
