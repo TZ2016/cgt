@@ -118,9 +118,14 @@ def train(args, X, Y, dbg_iter=None, dbg_epoch=None, dbg_done=None):
     params, f_step, f_loss, f_grad, f_surr = \
         make_funcs(net_in, net_out, size_sample=args.size_sample)
     param_col = ParamCollection(params)
-    param_col.set_value_flat(
-        np.random.normal(0., 1.,size=param_col.get_total_size())
-    )
+    init_params = nn.init_array(args.init_conf, (param_col.get_total_size(), 1))
+    param_col.set_value_flat(init_params.flatten())
+    if 'snapshot' in args:
+        snapshot = pickle.load(open(args['snapshot'], 'r'))
+        param_col.set_values(snapshot)
+    # param_col.set_value_flat(
+    #     np.random.normal(0., 1.,size=param_col.get_total_size())
+    # )
     # optim_state = Table(theta=param_col.get_value_flat(),
     #                     scratch=param_col.get_value_flat(),
     #                     step_size=args.step_size
@@ -141,7 +146,7 @@ def train(args, X, Y, dbg_iter=None, dbg_epoch=None, dbg_done=None):
             param_col.set_value_flat(optim_state.theta)
             if dbg_iter: dbg_iter(i_epoch, i_iter, optim_state, info)
         if dbg_epoch: dbg_epoch(i_epoch, param_col, f_surr)
-    if dbg_done: dbg_done(param_col, optim_state)
+    if dbg_done: dbg_done(param_col, optim_state, f_surr)
     return optim_state
 
 
@@ -179,14 +184,14 @@ def example_debug(args, X, out_path='.'):
         pprint.pprint(_params_val)
         # sample the network to track progress
         s_X = np.random.choice(X.flatten(), size=(size_sample, 1), replace=False)
-        info = f_surr(s_X, np.zeros((size_sample, 1)), no_sample=True)
+        info = f_surr(s_X, np.zeros_like(s_X), no_sample=True)
         s_Y = info['net_out'][0]
         ep_samples.append((i_epoch, s_X.flatten(), s_Y.flatten()))
         # plot = plt.scatter(s_X.flatten(), s_Y.flatten(), **plt_kwargs[i_epoch])
         # s_Y_mu, s_Y_var = s_Y[:, 0], np.exp(s_Y[:, 1]) + 1.e-6
         # plt.scatter(s_X.flatten(), s_Y_mu.flatten())
         # ep_samples.append(plot)
-    def dbg_done(param_col, optim_state):
+    def dbg_done(param_col, optim_state, f_surr):
         assert len(ep_samples) >= max_plots
         # plot samples
         _ep_samples = np.array(ep_samples, dtype='object')
@@ -195,6 +200,10 @@ def example_debug(args, X, out_path='.'):
         _plots = [plt.scatter(*s[1:], **kw) for s, kw in zip(_split, plt_kwargs)]
         plt.legend(_plots, [l[0] for l in _split], scatterpoints=1, fontsize=6)
         plt.title('samples from network'); plt.savefig(func_path('net_samples.png'))
+        # final sample
+        _Y = f_surr(X, np.zeros_like(X), no_sample=True)['net_out'][0]
+        plt.close(); plt.scatter(X, _Y); plt.title('Final samples')
+        plt.savefig(func_path('net_sample_final.png'))
         # plot norms
         plt.close(); plt.figure(); plt.suptitle('norm')
         plt.subplot(211); plt.plot(conv_smoother(it_grad_norm)); plt.title('grad')
@@ -226,6 +235,8 @@ if __name__ == "__main__":
         step_size=.1,
         decay_rate=.95,
         size_sample=20,
+        init_conf=nn.XavierNormal(scale=1.),
+        # snapshot='/Users/Tianhao/workspace/cgt/tmp/rms_norm/params.pkl',
     )
     X_syn, Y_syn = data_synthetic_a(1000)
     state = train(args_synthetic, X_syn, Y_syn,
