@@ -1,5 +1,6 @@
 # Learning Stochastic Feedforward Neural Networks
 
+import os
 import cgt
 import pprint
 import matplotlib.pyplot as plt
@@ -139,20 +140,25 @@ def train(args, X, Y, dbg_iter=None, dbg_epoch=None, dbg_done=None):
             if dbg_iter: dbg_iter(i_epoch, i_iter, optim_state, info)
         if dbg_epoch: dbg_epoch(i_epoch, param_col, f_surr)
     if dbg_done: dbg_done()
-    all_loss, all_surr_loss = np.array(all_loss), np.array(all_surr_loss)
-    plt.plot(np.convolve(all_loss, [1. / X.shape[0]] * X.shape[0], 'same'))
-    plt.plot(np.convolve(all_surr_loss, [1. / X.shape[0]] * X.shape[0], 'same'))
 
 
-def example_debug(X):
+def example_debug(X, out_path='.'):
+    N, _ = X.shape
     plt_markers = ['x', 'o', 'v', 's', '+', '*']
     plt_colors = ['b', 'g', 'r', 'c', 'm', 'y', 'k']
     plt_kwargs = [{'marker': m, 'color': c, 's': 10}
                   for m in plt_markers for c in plt_colors]
     size_sample, max_plots = 50, 10
+    conv_smoother = lambda x: np.convolve(x, [1. / N] * N, mode='valid')
+    func_savefig = lambda file: plt.savefig(os.path.join(out_path, file))
+    # cache
     ep_samples = []
     it_grad_norm, it_theta_norm = [], []
+    it_loss, it_loss_surr = [], []
     def dbg_iter(i_epoch, i_iter, optim_state, info):
+        loss, loss_surr = info['loss'], info['surr_loss']
+        it_loss.append(np.sum(loss))
+        it_loss_surr.append(loss_surr)
         it_grad_norm.append(np.linalg.norm(optim_state.grad))
         it_theta_norm.append(np.linalg.norm(optim_state.theta))
     def dbg_epoch(i_epoch, param_col, f_surr):
@@ -180,15 +186,22 @@ def example_debug(X):
     def dbg_done():
         assert len(ep_samples) >= max_plots
         # plot samples
-        ep_samples_split = [l[0] for l in np.array_split(np.array(ep_samples, dtype='object'), max_plots)]
-        _plots = []; plt.close()
-        for i, s in enumerate(ep_samples_split):
-            _plots.append(plt.scatter(*s[1:], **plt_kwargs[i]))
-        plt.legend(_plots, [l[0] for l in ep_samples_split], scatterpoints=1, fontsize=6)
-        plt.savefig('tmp.png')
+        _ep_samples = np.array(ep_samples, dtype='object')
+        _split = [l[0] for l in np.array_split(_ep_samples, max_plots)]
+        plt.close()
+        _plots = [plt.scatter(*s[1:], **kw) for s, kw in zip(_split, plt_kwargs)]
+        plt.legend(_plots, [l[0] for l in _split], scatterpoints=1, fontsize=6)
+        plt.title('samples from network'); func_savefig('net_samples.png')
         # plot norms
-        plt.close(); plt.plot(it_grad_norm); plt.savefig('grad_norm.png')
-        plt.close(); plt.plot(it_theta_norm); plt.savefig('theta_norm.png')
+        plt.close(); plt.figure(); plt.suptitle('norm')
+        plt.subplot(211); plt.plot(conv_smoother(it_grad_norm)); plt.title('grad')
+        plt.subplot(212); plt.plot(conv_smoother(it_theta_norm)); plt.title('theta')
+        func_savefig('norm.png')
+        # plot loss
+        plt.close(); plt.figure(); plt.suptitle('loss')
+        plt.subplot(211); plt.plot(conv_smoother(it_loss)); plt.title('orig')
+        plt.subplot(212); plt.plot(conv_smoother(it_loss_surr)); plt.title('surr')
+        func_savefig('loss.png')
     return {'dbg_iter': dbg_iter, 'dbg_epoch': dbg_epoch, 'dbg_done': dbg_done}
 
 if __name__ == "__main__":
@@ -201,12 +214,13 @@ if __name__ == "__main__":
         num_units=[2, 3, 2],
         num_sto=[0, 1, 0],
         no_bias=False,
-        n_epochs=30,
+        n_epochs=60,
         step_size=.1,
         size_sample=60,
     )
     X_syn, Y_syn = data_synthetic_a(1000)
-    train(args_synthetic, X_syn, Y_syn, **example_debug(X_syn))
+    train(args_synthetic, X_syn, Y_syn,
+          **example_debug(X_syn, '/home/tianhao/workspace/cgt/tmp'))
 
     # X, Y = generate_examples(10, np.array([3.]), np.array([0.]), [.1])
     # X1, Y1 = generate_examples(10,
