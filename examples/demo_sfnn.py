@@ -64,6 +64,7 @@ def hybrid_layer(X, size_in, size_out, size_random):
 
 
 def hybrid_network(size_in, size_out, num_units, num_stos):
+    assert len(num_units) == len(num_stos)
     X = cgt.matrix("X", fixed_shape=(None, size_in))
     prev_num_units, prev_out = size_in, X
     for (curr_num_units, curr_num_sto) in zip(num_units, num_stos):
@@ -95,25 +96,28 @@ def make_funcs(net_in, net_out, **kwargs):
     # out_sigma = cgt.exp(net_out[:, size_out:]) + 1.e-6  # positive sigma
     # loss_raw = -gaussian_diagonal.logprob(
     #     Y, net_out[:, :size_out],
-    #     out_sigma  # cgt.fill(.01, [size_batch, 1])
+        # out_sigma
+        # cgt.fill(.01, [size_batch, 1])
     # )
     loss = cgt.sum(loss_raw) / size_batch
     # end of loss definition
     params = nn.get_parameters(loss)
-    if kwargs.has_key('no_bias'):
+    if kwargs.pop('no_bias', False):
         params = [p for p in params if not p.name.endswith(".b")]
     f_loss = cgt.function([net_in, Y], [net_out, loss])
-    f_surr = get_surrogate_func([net_in, Y], [net_out], loss_raw, params, 40)
+    size_sample = kwargs.pop('size_sample', 10)
+    f_surr = get_surrogate_func([net_in, Y], [net_out], loss_raw, params, size_sample)
     return params, f_step, f_loss, f_grad, f_surr
 
 
 def train(args, X, Y, dbg_iter=None, dbg_epoch=None, dbg_done=None):
     net_in, net_out = hybrid_network(args.num_inputs, args.num_outputs,
                                      args.num_units, args.num_sto)
-    params, f_step, f_loss, f_grad, f_surr = make_funcs(net_in, net_out)
+    params, f_step, f_loss, f_grad, f_surr = \
+        make_funcs(net_in, net_out, size_sample=args.size_sample)
     param_col = ParamCollection(params)
     param_col.set_value_flat(
-        np.random.uniform(-.1, .1, size=(param_col.get_total_size(),))
+        np.random.normal(0., 1.,size=param_col.get_total_size())
     )
     optim_state = Table(theta=param_col.get_value_flat(),
                         grad=param_col.get_value_flat(),
@@ -140,15 +144,17 @@ def train(args, X, Y, dbg_iter=None, dbg_epoch=None, dbg_done=None):
     plt.plot(np.convolve(all_surr_loss, [1. / X.shape[0]] * X.shape[0], 'same'))
 
 
-def example_debug():
+def example_debug(X):
     plt_markers = ['x', 'o', 'v', 's', '+', '*']
     plt_colors = ['b', 'g', 'r', 'c', 'm', 'y', 'k']
     plt_kwargs = [{'marker': m, 'color': c, 's': 10}
                   for m in plt_markers for c in plt_colors]
     size_sample, max_plots = 50, 10
     ep_samples = []
+    it_grad_norm, it_theta_norm = [], []
     def dbg_iter(i_epoch, i_iter, optim_state, info):
-        print np.linalg.norm(optim_state.grad)
+        it_grad_norm.append(np.linalg.norm(optim_state.grad))
+        it_theta_norm.append(np.linalg.norm(optim_state.theta))
     def dbg_epoch(i_epoch, param_col, f_surr):
         print "Epoch %d" % i_epoch
         print "network parameters"
@@ -163,22 +169,26 @@ def example_debug():
         # pprint.pprint( _ber_param)
         pprint.pprint(_params_val)
         # sample the network to track progress
-        s_X = np.random.uniform(0., 1., (size_sample, 1))
+        s_X = np.random.choice(X.flatten(), size=(size_sample, 1), replace=False)
         info = f_surr(s_X, np.zeros((size_sample, 1)), no_sample=True)
         s_Y = info['net_out'][0]
-        ep_samples.append((i_epoch, (s_X.flatten(), s_Y.flatten())))
+        ep_samples.append((i_epoch, s_X.flatten(), s_Y.flatten()))
         # plot = plt.scatter(s_X.flatten(), s_Y.flatten(), **plt_kwargs[i_epoch])
         # s_Y_mu, s_Y_var = s_Y[:, 0], np.exp(s_Y[:, 1]) + 1.e-6
         # plt.scatter(s_X.flatten(), s_Y_mu.flatten())
         # ep_samples.append(plot)
     def dbg_done():
-        assert len(ep_samples) > max_plots
-        ep_samples_split = [l[0] for l in np.array_split(np.array(ep_samples), max_plots)]
-        _plots = []
+        assert len(ep_samples) >= max_plots
+        # plot samples
+        ep_samples_split = [l[0] for l in np.array_split(np.array(ep_samples, dtype='object'), max_plots)]
+        _plots = []; plt.close()
         for i, s in enumerate(ep_samples_split):
-            _plots.append(plt.scatter(*s[1], **plt_kwargs[i]))
+            _plots.append(plt.scatter(*s[1:], **plt_kwargs[i]))
         plt.legend(_plots, [l[0] for l in ep_samples_split], scatterpoints=1, fontsize=6)
         plt.savefig('tmp.png')
+        # plot norms
+        plt.close(); plt.plot(it_grad_norm); plt.savefig('grad_norm.png')
+        plt.close(); plt.plot(it_theta_norm); plt.savefig('theta_norm.png')
     return {'dbg_iter': dbg_iter, 'dbg_epoch': dbg_epoch, 'dbg_done': dbg_done}
 
 if __name__ == "__main__":
@@ -188,14 +198,15 @@ if __name__ == "__main__":
     args_synthetic = Table(
         num_inputs=1,
         num_outputs=1,
-        num_units=[1, ],
-        num_sto=[0, ],
+        num_units=[2, 3, 2],
+        num_sto=[0, 1, 0],
         no_bias=False,
-        n_epochs=40,
+        n_epochs=30,
         step_size=.1,
+        size_sample=60,
     )
-    X_syn, Y_syn = data_synthetic_a(100)
-    train(args_synthetic, X_syn, Y_syn, **example_debug())
+    X_syn, Y_syn = data_synthetic_a(1000)
+    train(args_synthetic, X_syn, Y_syn, **example_debug(X_syn))
 
     # X, Y = generate_examples(10, np.array([3.]), np.array([0.]), [.1])
     # X1, Y1 = generate_examples(10,
