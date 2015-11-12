@@ -8,7 +8,6 @@ from cgt.core import get_surrogate_func
 from cgt import nn
 import numpy as np
 import pickle
-import traceback
 from sklearn.preprocessing import StandardScaler
 from scipy.special import expit as sigmoid
 from param_collection import ParamCollection
@@ -18,10 +17,10 @@ from demo_char_rnn import Table, make_rmsprop_state, rmsprop_update
 
 def err_handler(type, flag):
     print type, flag
-    traceback.print_exc()
     # raise FloatingPointError('refer to err_handler for more details')
 np.seterr(divide='call', over='call', invalid='call')
 np.seterrcall(err_handler)
+print cgt.get_config(True)
 
 
 def generate_examples(N, x, y, p_y):
@@ -93,15 +92,15 @@ def hybrid_network(size_in, size_out, num_units, num_stos):
     return X, net_out
 
 
-def make_funcs(net_in, net_out, **kwargs):
+def make_funcs(net_in, net_out, config):
     def f_grad (*x):
         out = f_surr(*x)
         return out['loss'], out['surr_loss'], out['surr_grad']
     Y = cgt.matrix("Y")
     params = nn.get_parameters(net_out)
-    if kwargs.pop('no_bias', False):
+    if 'no_bias' in config and config['no_bias']:
+        print "Excluding bias"
         params = [p for p in params if not p.name.endswith(".b")]
-    params_flat = cgt.concatenate([p.flatten() for p in params])
     size_out, size_batch = Y.shape[1], net_in.shape[0]
     f_step = cgt.function([net_in], [net_out])
     # loss_raw of shape (size_batch, 1); loss should be a scalar
@@ -110,17 +109,22 @@ def make_funcs(net_in, net_out, **kwargs):
     # negative log-likelihood
     # out_sigma = cgt.exp(net_out[:, size_out:]) + 1.e-6  # positive sigma
     # loss_raw = -gaussian_diagonal.logprob(
-    #     Y, net_out[:, :size_out],
+    #     Y, net_out,
         # out_sigma
-        # cgt.fill(.01, [size_batch, 1])
+        # cgt.fill(.01, [size_batch, size_out])
     # )
-    # loss_param = cgt.fill(cgt.sum(params_flat ** 2), [size_batch, 1])
+    if 'param_penal_wt' in config:
+        print "Applying penalty on parameter norm"
+        assert config['param_penal_wt'] > 0
+        params_flat = cgt.concatenate([p.flatten() for p in params])
+        loss_param = cgt.fill(cgt.sum(params_flat ** 2), [size_batch, 1])
+        loss_param *= config['param_penal_wt']
+        loss_raw += loss_param
     loss = cgt.sum(loss_raw) / size_batch
     # end of loss definition
     f_loss = cgt.function([net_in, Y], [net_out, loss])
-    size_sample = kwargs.pop('size_sample', 10)
-    f_surr = get_surrogate_func([net_in, Y], [net_out],
-                                [loss_raw], params, size_sample)
+    f_surr = get_surrogate_func([net_in, Y], [net_out], [loss_raw], params,
+                                config['size_sample'])
     return params, f_step, f_loss, f_grad, f_surr
 
 
@@ -128,11 +132,12 @@ def train(args, X, Y, dbg_iter=None, dbg_epoch=None, dbg_done=None):
     net_in, net_out = hybrid_network(args.num_inputs, args.num_outputs,
                                      args.num_units, args.num_sto)
     params, f_step, f_loss, f_grad, f_surr = \
-        make_funcs(net_in, net_out, size_sample=args.size_sample)
+        make_funcs(net_in, net_out, args)
     param_col = ParamCollection(params)
     init_params = nn.init_array(args.init_conf, (param_col.get_total_size(), 1))
     param_col.set_value_flat(init_params.flatten())
     if 'snapshot' in args:
+        print "Loading params from previous snapshot"
         snapshot = pickle.load(open(args['snapshot'], 'r'))
         param_col.set_values(snapshot)
     # param_col.set_value_flat(
@@ -147,7 +152,8 @@ def train(args, X, Y, dbg_iter=None, dbg_epoch=None, dbg_done=None):
                                      decay_rate=args.decay_rate)
     for i_epoch in range(args.n_epochs):
         for i_iter in range(X.shape[0]):
-            x, y = X[i_iter:i_iter+1], Y[i_iter:i_iter+1]
+            j = np.random.choice(X.shape[0])
+            x, y = X[j:j+1], Y[j:j+1]
             info = f_surr(x, y)
             loss, loss_surr, grad = info['loss'], info['surr_loss'], info['surr_grad']
             # loss, loss_surr, grad = f_grad(x, y)
@@ -185,24 +191,12 @@ def example_debug(args, X, out_path='.'):
         print "Epoch %d" % i_epoch
         print "network parameters"
         _params_val = param_col.get_values()
-        # _ber_param = _params_val[0].T.dot(EXAMPLES_ARGS.x)
-        # if not args.no_bias: _ber_param += _params_val[1].flatten()
-        # _ber_param = sigmoid(_ber_param)
-        # print ""
-        # print "network params"
-        # pprint.pprint(_params_val)
-        # print "bernoulli param"
-        # pprint.pprint( _ber_param)
         pprint.pprint(_params_val)
         # sample the network to track progress
         s_X = np.random.choice(X.flatten(), size=(size_sample, 1), replace=False)
         info = f_surr(s_X, np.zeros_like(s_X), no_sample=True)
         s_Y = info['net_out'][0]
         ep_samples.append((i_epoch, s_X.flatten(), s_Y.flatten()))
-        # plot = plt.scatter(s_X.flatten(), s_Y.flatten(), **plt_kwargs[i_epoch])
-        # s_Y_mu, s_Y_var = s_Y[:, 0], np.exp(s_Y[:, 1]) + 1.e-6
-        # plt.scatter(s_X.flatten(), s_Y_mu.flatten())
-        # ep_samples.append(plot)
     def dbg_done(param_col, optim_state, f_surr):
         assert len(ep_samples) >= max_plots
         # plot samples
@@ -233,7 +227,7 @@ def example_debug(args, X, out_path='.'):
     return {'dbg_iter': dbg_iter, 'dbg_epoch': dbg_epoch, 'dbg_done': dbg_done}
 
 if __name__ == "__main__":
-    DUMP_PATH = '/Users/Tianhao/workspace/cgt/tmp'
+    DUMP_PATH = os.path.join(os.environ['HOME'], 'workspace/cgt/tmp')
     #################3#####
     #  for synthetic data #
     #######################
@@ -243,12 +237,13 @@ if __name__ == "__main__":
         num_units=[2, 3, 2],
         num_sto=[0, 1, 0],
         no_bias=False,
+        # param_penal_wt=1.e-4,
         n_epochs=60,
         step_size=.1,
         decay_rate=.95,
         size_sample=20,
         init_conf=nn.XavierNormal(scale=1.),
-        # snapshot='/Users/Tianhao/workspace/cgt/tmp/rms_xavier/params.pkl',
+        # snapshot=os.path.join(DUMP_PATH, 'l3_s0_parampenalty_1e-4/params.pkl')
     )
     X_syn, Y_syn = data_synthetic_a(1000)
     X_syn, Y_syn = scale_data((X_syn, Y_syn))
@@ -267,14 +262,3 @@ if __name__ == "__main__":
     #                            [0.9])
     # X = np.concatenate([X1, X2, X3])
     # Y = np.concatenate([Y1, Y2, Y3])
-    # import argparse
-    # parser = argparse.ArgumentParser()
-    # parser.add_argument("--step_size", type=float, default=.01)
-    # parser.add_argument("--n_epochs", type=int, default=100)
-    # parser.add_argument("--decay_rate", type=float, default=.95)
-    # parser.add_argument("--num_inputs", type=int)
-    # parser.add_argument("--num_units", type=int, nargs='+')
-    # parser.add_argument("--num_sto", type=int, nargs='+')
-    # args = parser.parse_args()
-
-
