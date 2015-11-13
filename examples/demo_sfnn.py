@@ -74,7 +74,7 @@ def hybrid_layer(X, size_in, size_out, size_random):
     return out
 
 
-def hybrid_network(size_in, size_out, num_units, num_stos):
+def hybrid_network(size_in, size_out, num_units, num_stos, layers_out=[]):
     assert len(num_units) == len(num_stos)
     X = cgt.matrix("X", fixed_shape=(None, size_in))
     prev_num_units, prev_out = size_in, X
@@ -83,6 +83,7 @@ def hybrid_network(size_in, size_out, num_units, num_stos):
             prev_out, prev_num_units, curr_num_units, curr_num_sto
         )
         prev_num_units = curr_num_units
+        layers_out.append(prev_out)
     # TODO_TZ bigger problem! param cannot deterministically influence cost
     #         otherwise the surrogate cost is not complete log likelihood
     net_out = nn.Affine(prev_num_units, size_out,
@@ -93,7 +94,7 @@ def hybrid_network(size_in, size_out, num_units, num_stos):
     return X, net_out
 
 
-def make_funcs(net_in, net_out, config):
+def make_funcs(net_in, net_out, config, dbg_out=None):
     def f_grad (*x):
         out = f_surr(*x)
         return out['loss'], out['surr_loss'], out['surr_grad']
@@ -124,16 +125,20 @@ def make_funcs(net_in, net_out, config):
     loss = cgt.sum(loss_raw) / size_batch
     # end of loss definition
     f_loss = cgt.function([net_in, Y], [net_out, loss])
-    f_surr = get_surrogate_func([net_in, Y], [net_out], [loss_raw], params,
+    f_surr = get_surrogate_func([net_in, Y],
+                                [net_out] + dbg_out,
+                                [loss_raw], params,
                                 config['size_sample'])
     return params, f_step, f_loss, f_grad, f_surr
 
 
 def train(args, X, Y, dbg_iter=None, dbg_epoch=None, dbg_done=None):
+    dbg_out = []
     net_in, net_out = hybrid_network(args.num_inputs, args.num_outputs,
-                                     args.num_units, args.num_sto)
+                                     args.num_units, args.num_sto,
+                                     layers_out=dbg_out)
     params, f_step, f_loss, f_grad, f_surr = \
-        make_funcs(net_in, net_out, args)
+        make_funcs(net_in, net_out, args, dbg_out=dbg_out)
     param_col = ParamCollection(params)
     init_params = nn.init_array(args.init_conf, (param_col.get_total_size(), 1))
     param_col.set_value_flat(init_params.flatten())
