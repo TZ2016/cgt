@@ -52,8 +52,9 @@ def data_synthetic_a(N):
 
 def data_simple(N):
     X = np.random.uniform(0., 1., N)
-    Y = X + np.random.uniform(-.1, .1, N)
-    # Y += np.random.binomial(1, 0.5, N)
+    # change the mult to 2., does not work as well
+    Y = X + 1. * np.random.normal(0., .1, N)
+    Y += np.random.binomial(1, 0.5, N)
     Y, X = Y.reshape((N, 1)), X.reshape((N, 1))
     return X, Y
 
@@ -162,31 +163,33 @@ def train(args, X, Y, dbg_iter=None, dbg_epoch=None, dbg_done=None):
             # optim_state.scratch = param_col.flatten_values(grad)
             # optim_state.theta -= optim_state.step_size * optim_state.scratch
             param_col.set_value_flat(optim_state.theta)
-            if dbg_iter: dbg_iter(i_epoch, i_iter, optim_state, info)
+            if dbg_iter: dbg_iter(i_epoch, i_iter, param_col, optim_state, info)
         if dbg_epoch: dbg_epoch(i_epoch, param_col, f_surr)
     if dbg_done: dbg_done(param_col, optim_state, f_surr)
     return optim_state
 
 
-def example_debug(args, X, out_path='.'):
+def example_debug(args, X, Y, out_path='.'):
     N, _ = X.shape
     plt_markers = ['x', 'o', 'v', 's', '+', '*']
     plt_colors = ['b', 'g', 'r', 'c', 'm', 'y', 'k']
     plt_kwargs = [{'marker': m, 'color': c, 's': 10}
                   for m in plt_markers for c in plt_colors]
-    size_sample, max_plots = 50, 10
+    size_sample, max_plots = 50, 5
     conv_smoother = lambda x: np.convolve(x, [1. / N] * N, mode='valid')
     func_path = lambda p: os.path.join(out_path, p)
     # cache
     ep_samples = []
+    it_grad_norm_comp = []
     it_grad_norm, it_theta_norm = [], []
     it_loss, it_loss_surr = [], []
-    def dbg_iter(i_epoch, i_iter, optim_state, info):
+    def dbg_iter(i_epoch, i_iter, param_col, optim_state, info):
         loss, loss_surr = info['loss'], info['surr_loss']
         it_loss.append(np.sum(loss))
         it_loss_surr.append(loss_surr)
         it_grad_norm.append(np.linalg.norm(optim_state.scratch))
         it_theta_norm.append(np.linalg.norm(optim_state.theta))
+        it_grad_norm_comp.append([np.linalg.norm(g) for g in info['surr_grad']])
     def dbg_epoch(i_epoch, param_col, f_surr):
         print "Epoch %d" % i_epoch
         print "network parameters"
@@ -198,23 +201,33 @@ def example_debug(args, X, out_path='.'):
         s_Y = info['net_out'][0]
         ep_samples.append((i_epoch, s_X.flatten(), s_Y.flatten()))
     def dbg_done(param_col, optim_state, f_surr):
-        assert len(ep_samples) >= max_plots
-        # plot samples
+        plt.close('all')
+        # plot samples together
         _ep_samples = np.array(ep_samples, dtype='object')
-        _split = [l[0] for l in np.array_split(_ep_samples, max_plots)]
-        plt.close()
+        _max_plots = min(len(ep_samples), max_plots)
+        _split = [l[0] for l in np.array_split(_ep_samples, _max_plots)]
         _plots = [plt.scatter(*s[1:], **kw) for s, kw in zip(_split, plt_kwargs)]
         plt.legend(_plots, [l[0] for l in _split], scatterpoints=1, fontsize=6)
         plt.title('samples from network'); plt.savefig(func_path('net_samples.png'))
-        # final sample
-        _Y = f_surr(X, np.zeros_like(X), no_sample=True)['net_out'][0]
-        plt.close(); plt.scatter(X, _Y); plt.title('Final samples')
-        plt.savefig(func_path('net_sample_final.png'))
+        # plot samples for each epoch
+        _axis = plt.axis()  # this range should be good
+        for _e, _sample in enumerate(ep_samples):
+            _ttl = 'epoch_%d.png' % _e
+            plt.cla(); plt.scatter(*_sample[1:]); plt.axis(_axis); plt.title(_ttl)
+            plt.scatter(X, Y, alpha=0.5, color='y', marker='*')
+            plt.savefig(func_path('_sample/' + _ttl))
         # plot norms
         plt.close(); plt.figure(); plt.suptitle('norm')
         plt.subplot(211); plt.plot(conv_smoother(it_grad_norm)); plt.title('grad')
         plt.subplot(212); plt.plot(conv_smoother(it_theta_norm)); plt.title('theta')
         plt.savefig(func_path('norm.png'))
+        # plot grad norm component-wise
+        _norm_cmp = np.array(it_grad_norm_comp).T
+        plt.close(); plt.figure(); plt.suptitle('grad norm layer-wise')
+        _num = len(it_grad_norm_comp[0])
+        for _i in range(_num):
+            plt.subplot(_num, 1, _i+1); plt.plot(conv_smoother(_norm_cmp[_i]))
+        plt.savefig(func_path('norm_grad_cmp.png'))
         # plot loss
         plt.close(); plt.figure(); plt.suptitle('loss')
         plt.subplot(211); plt.plot(conv_smoother(it_loss)); plt.title('orig')
@@ -234,21 +247,21 @@ if __name__ == "__main__":
     args_synthetic = Table(
         num_inputs=1,
         num_outputs=1,
-        num_units=[2, 3, 2],
-        num_sto=[0, 1, 0],
+        num_units=[2, 2],
+        num_sto=[0, 1],
         no_bias=False,
         # param_penal_wt=1.e-4,
         n_epochs=60,
-        step_size=.1,
+        step_size=.01,
         decay_rate=.95,
-        size_sample=20,
+        size_sample=5,  # it seems few sample size works better
         init_conf=nn.XavierNormal(scale=1.),
-        # snapshot=os.path.join(DUMP_PATH, 'l3_s0_parampenalty_1e-4/params.pkl')
+        snapshot=os.path.join(DUMP_PATH, 'params.pkl')
     )
-    X_syn, Y_syn = data_synthetic_a(1000)
+    X_syn, Y_syn = data_simple(500)
     X_syn, Y_syn = scale_data((X_syn, Y_syn))
     state = train(args_synthetic, X_syn, Y_syn,
-                  **example_debug(args_synthetic, X_syn, DUMP_PATH))
+                  **example_debug(args_synthetic, X_syn, Y_syn, DUMP_PATH))
 
     # X, Y = generate_examples(10, np.array([3.]), np.array([0.]), [.1])
     # X1, Y1 = generate_examples(10,

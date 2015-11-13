@@ -819,6 +819,8 @@ def get_surrogate_func(inputs, outputs, costs, wrt, num_samples):
         surr_loss, surr_loss_raw, surr_grad = _out[0], _out[1], _out[2:]
         # TODO_TZ this is ugly, fix this
         return {
+            # inputs:
+            'inputs': _inputs,
             # scalar; importance weighted mean of surrogate loss to minimize
             'surr_loss': surr_loss,
             # (num_samples, 1); surrogate loss for each sample
