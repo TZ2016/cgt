@@ -20,6 +20,7 @@ def err_handler(type, flag):
     # raise FloatingPointError('refer to err_handler for more details')
 np.seterr(divide='call', over='call', invalid='call')
 np.seterrcall(err_handler)
+np.set_printoptions(precision=4, suppress=True)
 print cgt.get_config(True)
 
 
@@ -58,12 +59,21 @@ def data_simple(N):
     Y, X = Y.reshape((N, 1)), X.reshape((N, 1))
     return X, Y
 
+def data_simple_sigmoid(N):
+    X = np.random.uniform(-10., 10., N)
+    Y = sigmoid(X)
+    Y += np.random.normal(0., .1, N)
+    Y += np.random.binomial(1, .5, N)
+    Y, X = Y.reshape((N, 1)), X.reshape((N, 1))
+    return X, Y
 
-def hybrid_layer(X, size_in, size_out, size_random):
+
+def hybrid_layer(X, size_in, size_out, size_random, dbg_out=[]):
     assert size_out >= size_random >= 0
     out = cgt.sigmoid(nn.Affine(
         size_in, size_out, name="InnerProd(%d->%d)" % (size_in, size_out)
     )(X))
+    dbg_out.append(out)
     if size_random == 0:
         return out
     if size_random == size_out:
@@ -74,21 +84,26 @@ def hybrid_layer(X, size_in, size_out, size_random):
     return out
 
 
-def hybrid_network(size_in, size_out, num_units, num_stos, layers_out=[]):
+def hybrid_network(size_in, size_out, num_units, num_stos, dbg_out=[]):
     assert len(num_units) == len(num_stos)
     X = cgt.matrix("X", fixed_shape=(None, size_in))
     prev_num_units, prev_out = size_in, X
+    dbg_out.append(X)
     for (curr_num_units, curr_num_sto) in zip(num_units, num_stos):
+        _layer_dbg_out = []
         prev_out = hybrid_layer(
-            prev_out, prev_num_units, curr_num_units, curr_num_sto
+            prev_out, prev_num_units, curr_num_units, curr_num_sto,
+            dbg_out=_layer_dbg_out
         )
         prev_num_units = curr_num_units
-        layers_out.append(prev_out)
+        dbg_out.extend(_layer_dbg_out)
+        dbg_out.append(prev_out)
     # TODO_TZ bigger problem! param cannot deterministically influence cost
     #         otherwise the surrogate cost is not complete log likelihood
     net_out = nn.Affine(prev_num_units, size_out,
                         name="InnerProd(%d->%d)" % (prev_num_units, size_out)
                         )(prev_out)
+    dbg_out.append(net_out)
     # assert prev_num_units == size_out
     # net_out = prev_out
     return X, net_out
@@ -136,7 +151,7 @@ def train(args, X, Y, dbg_iter=None, dbg_epoch=None, dbg_done=None):
     dbg_out = []
     net_in, net_out = hybrid_network(args.num_inputs, args.num_outputs,
                                      args.num_units, args.num_sto,
-                                     layers_out=dbg_out)
+                                     dbg_out=dbg_out)
     params, f_step, f_loss, f_grad, f_surr = \
         make_funcs(net_in, net_out, args, dbg_out=dbg_out)
     param_col = ParamCollection(params)
