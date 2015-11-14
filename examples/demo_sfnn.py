@@ -157,6 +157,13 @@ def train(args, X, Y, dbg_iter=None, dbg_epoch=None, dbg_done=None):
     param_col = ParamCollection(params)
     init_params = nn.init_array(args.init_conf, (param_col.get_total_size(), 1))
     param_col.set_value_flat(init_params.flatten())
+    init_params = [
+        np.array([[0., 1.]]),  # W_1
+        np.array([[0., 0.]]),  # b_1
+        np.array([[1.], [1.]]),  # W_3
+        np.array([[0.]]),  # b_3
+    ]
+    param_col.set_values(init_params)
     if 'snapshot' in args:
         print "Loading params from previous snapshot"
         snapshot = pickle.load(open(args['snapshot'], 'r'))
@@ -183,6 +190,7 @@ def train(args, X, Y, dbg_iter=None, dbg_epoch=None, dbg_done=None):
             # optim_state.scratch = param_col.flatten_values(grad)
             # optim_state.theta -= optim_state.step_size * optim_state.scratch
             param_col.set_value_flat(optim_state.theta)
+            print param_col.get_value_flat()
             if dbg_iter: dbg_iter(i_epoch, i_iter, param_col, optim_state, info)
         if dbg_epoch: dbg_epoch(i_epoch, param_col, f_surr)
     if dbg_done: dbg_done(param_col, optim_state, f_surr)
@@ -267,19 +275,19 @@ if __name__ == "__main__":
     args_synthetic = Table(
         num_inputs=1,
         num_outputs=1,
-        num_units=[2, 2],
-        num_sto=[0, 1],
+        num_units=[2],
+        num_sto=[1],
         no_bias=False,
         # param_penal_wt=1.e-4,
         n_epochs=60,
         step_size=.01,
         decay_rate=.95,
-        size_sample=5,  # it seems few sample size works better
+        size_sample=4,  # it seems few sample size works better
         init_conf=nn.XavierNormal(scale=1.),
-        snapshot=os.path.join(DUMP_PATH, 'params.pkl')
+        # snapshot=os.path.join(DUMP_PATH, 'params.pkl')
     )
-    X_syn, Y_syn = data_simple(500)
-    X_syn, Y_syn = scale_data((X_syn, Y_syn))
+    X_syn, Y_syn = data_simple_sigmoid(100)
+    # X_syn, Y_syn = scale_data((X_syn, Y_syn))
     state = train(args_synthetic, X_syn, Y_syn,
                   **example_debug(args_synthetic, X_syn, Y_syn, DUMP_PATH))
 
@@ -295,3 +303,15 @@ if __name__ == "__main__":
     #                            [0.9])
     # X = np.concatenate([X1, X2, X3])
     # Y = np.concatenate([Y1, Y2, Y3])
+
+#   x, y =  [array([[-3.92524138]]), array([[ 1.03760652]])]
+# if predict correctly (batch=1)
+#     surr grad
+# [array([[-0.00032688,  0.00271957]], dtype=float32), array([[  8.32763981e-05,  -6.92841015e-04]], dtype=float32), array([[-0.03650236],
+#        [-0.00070652]], dtype=float32), array([[-0.03650236]], dtype=float32)]
+# if wrong
+# [array([[ 1.01745737,  0.15172736]], dtype=float32), array([[-0.25920886, -0.03865428]], dtype=float32), array([[ 0.        ],
+#        [-0.03941721]], dtype=float32), array([[-2.03650236]], dtype=float32)]
+# for samples=2, one correct, one wrong
+# [array([[ 0.50856525,  0.07722346]], dtype=float32), array([[-0.1295628 , -0.01967356]], dtype=float32), array([[-0.01825118],
+#        [-0.02006186]], dtype=float32), array([[-1.03650236]], dtype=float32)]
