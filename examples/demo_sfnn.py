@@ -142,8 +142,7 @@ def make_funcs(net_in, net_out, config, dbg_out=None):
     f_loss = cgt.function([net_in, Y], [net_out, loss])
     f_surr = get_surrogate_func([net_in, Y],
                                 [net_out] + dbg_out,
-                                [loss_raw], params,
-                                config['size_sample'])
+                                [loss_raw], params)
     return params, f_step, f_loss, f_grad, f_surr
 
 
@@ -180,9 +179,9 @@ def train(args, X, Y, dbg_iter=None, dbg_epoch=None, dbg_done=None):
                                      decay_rate=args.decay_rate)
     for i_epoch in range(args.n_epochs):
         for i_iter in range(X.shape[0]):
-            j = np.random.choice(X.shape[0])
-            x, y = X[j:j+1], Y[j:j+1]
-            info = f_surr(x, y)
+            ind = np.random.choice(X.shape[0], args['size_batch'])
+            x, y = X[ind], Y[ind]  # not sure this works for multi-dim
+            info = f_surr(x, y, num_samples=args['size_sample'])
             loss, loss_surr, grad = info['loss'], info['surr_loss'], info['surr_grad']
             # loss, loss_surr, grad = f_grad(x, y)
             # update
@@ -282,7 +281,8 @@ if __name__ == "__main__":
         n_epochs=60,
         step_size=.01,
         decay_rate=.95,
-        size_sample=4,  # it seems few sample size works better
+        size_sample=4,  # #times to sample the network per data pair
+        size_batch=100,  # #data pairs for each gradient estimate
         init_conf=nn.XavierNormal(scale=1.),
         # snapshot=os.path.join(DUMP_PATH, 'params.pkl')
     )

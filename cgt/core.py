@@ -803,15 +803,16 @@ def _get_surr_costs(costs):
         warnings.warn('Conversion on already deterministic graph')
     return total_surr_costs, args_cost, args_rand
 
-def get_surrogate_func(inputs, outputs, costs, wrt, num_samples):
+def get_surrogate_func(inputs, outputs, costs, wrt):
     def surr_func_wrapper(*_inputs, **kwargs):
         """Given real-valued inputs, return outputs using sampled values """
-        if not kwargs.pop('no_sample', False):
-            assert np.all([_i.shape[0] == 1 for _i in _inputs])
-            m = kwargs.pop('num_samples', num_samples)
-            if m > 1 and not args_rand:
-                warnings.warn('Sample multiple times on a deterministic graph')
-            _inputs = [np.repeat(_i, m, axis=0) for _i in _inputs]
+        m = int(kwargs.pop('num_samples', 1))
+        assert m > 0
+        if m == 1:
+            warnings.warn('Sampling network only once')
+        if m > 1 and not args_rand:
+            warnings.warn('Sample multiple times on a deterministic graph')
+        _inputs = [np.repeat(_i, m, axis=0) for _i in _inputs]  # not sure this works for multi-dim
         _out = f_sample(*_inputs)
         net_out, sample = _out[:len(outputs)], _out[len(outputs):]
         s_rand, s_loss = sample[:len(args_rand.keys())], sample[len(args_rand.keys()):]
