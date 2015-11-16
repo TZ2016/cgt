@@ -2,6 +2,8 @@
 
 import os
 import cgt
+import time
+import warnings
 import pprint
 import matplotlib.pyplot as plt
 from cgt.core import get_surrogate_func
@@ -112,7 +114,7 @@ def hybrid_network(size_in, size_out, num_units, num_stos, dbg_out=[]):
 def make_funcs(net_in, net_out, config, dbg_out=None):
     def f_grad (*x):
         out = f_surr(*x)
-        return out['loss'], out['surr_loss'], out['surr_grad']
+        return out['loss'], out['surr_loss'], out['grad']
     Y = cgt.matrix("Y")
     params = nn.get_parameters(net_out)
     if 'no_bias' in config and config['no_bias']:
@@ -144,7 +146,7 @@ def make_funcs(net_in, net_out, config, dbg_out=None):
     f_surr = get_surrogate_func([net_in, Y],
                                 [net_out] + dbg_out,
                                 [loss_raw], params)
-    return params, f_step, f_loss, f_grad, f_surr
+    return params, f_step, None, None, f_surr
 
 
 def rmsprop_update(grad, state):
@@ -192,7 +194,6 @@ def train(args, X, Y, dbg_iter=None, dbg_epoch=None, dbg_done=None):
             x, y = X[ind], Y[ind]  # not sure this works for multi-dim
             info = f_surr(x, y, num_samples=args['size_sample'])
             grad = info['grad']
-            # loss, loss_surr, grad = f_grad(x, y)
             # update
             rmsprop_update(param_col.flatten_values(grad), optim_state)
             # optim_state.scratch = param_col.flatten_values(grad)
@@ -206,6 +207,13 @@ def train(args, X, Y, dbg_iter=None, dbg_epoch=None, dbg_done=None):
 
 
 def example_debug(args, X, Y, out_path='.'):
+    def safe_path(rel_path):
+        abs_path = os.path.join(out_path, rel_path)
+        d = os.path.dirname(abs_path)
+        if not os.path.exists(d):
+            warnings.warn("Making new directory: %s" % d)
+            os.makedirs(d)
+        return abs_path
     N, _ = X.shape
     plt_markers = ['x', 'o', 'v', 's', '+', '*']
     plt_colors = ['b', 'g', 'r', 'c', 'm', 'y', 'k']
@@ -213,28 +221,27 @@ def example_debug(args, X, Y, out_path='.'):
                   for m in plt_markers for c in plt_colors]
     size_sample, max_plots = 50, 5
     conv_smoother = lambda x: np.convolve(x, [1. / N] * N, mode='valid')
-    func_path = lambda p: os.path.join(out_path, p)
     # cache
     ep_samples = []
-    it_grad_norm_comp = []
-    it_grad_norm, it_theta_norm = [], []
     it_loss, it_loss_surr = [], []
+    it_grad_norm, it_theta_norm = [], []
+    it_grad_norm_comp, it_theta_comp = [], []
     def dbg_iter(i_epoch, i_iter, param_col, optim_state, info):
-        loss_surr = info['objective']
-        # it_loss.append(np.sum(loss))
-        it_loss_surr.append(loss_surr)
+        it_loss.append(np.sum(info['objective_unweighted']))
+        it_loss_surr.append(info['objective'])
         it_grad_norm.append(np.linalg.norm(optim_state.scratch))
         it_theta_norm.append(np.linalg.norm(optim_state.theta))
+        it_theta_comp.append(np.copy(optim_state.theta))
         it_grad_norm_comp.append([np.linalg.norm(g) for g in info['grad']])
     def dbg_epoch(i_epoch, param_col, f_surr):
         print "Epoch %d" % i_epoch
         print "network parameters"
         _params_val = param_col.get_values()
-        pprint.pprint(_params_val)
+        # pprint.pprint(_params_val)
         # sample the network to track progress
         s_X = np.random.choice(X.flatten(), size=(size_sample, 1), replace=False)
-        info = f_surr(s_X, np.zeros_like(s_X), no_sample=True)
-        s_Y = info['net_out'][0]
+        info = f_surr(s_X, np.zeros_like(s_X), sample_only=True, num_samples=1)
+        s_Y = info['outputs'][0]
         ep_samples.append((i_epoch, s_X.flatten(), s_Y.flatten()))
     def dbg_done(param_col, optim_state, f_surr):
         plt.close('all')
@@ -244,39 +251,47 @@ def example_debug(args, X, Y, out_path='.'):
         _split = [l[0] for l in np.array_split(_ep_samples, _max_plots)]
         _plots = [plt.scatter(*s[1:], **kw) for s, kw in zip(_split, plt_kwargs)]
         plt.legend(_plots, [l[0] for l in _split], scatterpoints=1, fontsize=6)
-        plt.title('samples from network'); plt.savefig(func_path('net_samples.png'))
+        plt.title('samples from network'); plt.savefig(safe_path('net_samples.png'))
         # plot samples for each epoch
         _axis = plt.axis()  # this range should be good
         for _e, _sample in enumerate(ep_samples):
             _ttl = 'epoch_%d.png' % _e
             plt.cla(); plt.scatter(*_sample[1:]); plt.axis(_axis); plt.title(_ttl)
             plt.scatter(X, Y, alpha=0.5, color='y', marker='*')
-            plt.savefig(func_path('_sample/' + _ttl))
+            plt.savefig(safe_path('_sample/' + _ttl))
         # plot norms
         plt.close(); plt.figure(); plt.suptitle('norm')
         plt.subplot(211); plt.plot(conv_smoother(it_grad_norm)); plt.title('grad')
         plt.subplot(212); plt.plot(conv_smoother(it_theta_norm)); plt.title('theta')
-        plt.savefig(func_path('norm.png'))
+        plt.savefig(safe_path('norm.png'))
         # plot grad norm component-wise
         _norm_cmp = np.array(it_grad_norm_comp).T
         plt.close(); plt.figure(); plt.suptitle('grad norm layer-wise')
         _num = len(it_grad_norm_comp[0])
         for _i in range(_num):
             plt.subplot(_num, 1, _i+1); plt.plot(conv_smoother(_norm_cmp[_i]))
-        plt.savefig(func_path('norm_grad_cmp.png'))
+        plt.savefig(safe_path('norm_grad_cmp.png'))
+        # plot theta component-wise
+        _theta_cmp = np.array(it_theta_comp).T
+        plt.close(); plt.figure(); plt.suptitle('theta components')
+        _num = len(it_theta_comp[0])
+        for _i in range(_num):
+            plt.subplot(_num, 1, _i+1); plt.plot(conv_smoother(_theta_cmp[_i]))
+        plt.savefig(safe_path('theta_cmp.png'))
         # plot loss
         plt.close(); plt.figure(); plt.suptitle('loss')
         plt.subplot(211); plt.plot(conv_smoother(it_loss)); plt.title('orig')
         plt.subplot(212); plt.plot(conv_smoother(it_loss_surr)); plt.title('surr')
-        plt.savefig(func_path('loss.png'))
+        plt.savefig(safe_path('loss.png'))
         # save params
         theta = param_col.get_values()
-        pickle.dump(theta, open(func_path('params.pkl'), 'w'))
-        pickle.dump(args, open(func_path('args.pkl'), 'w'))
+        pickle.dump(theta, open(safe_path('params.pkl'), 'w'))
+        pickle.dump(args, open(safe_path('args.pkl'), 'w'))
     return {'dbg_iter': dbg_iter, 'dbg_epoch': dbg_epoch, 'dbg_done': dbg_done}
 
 if __name__ == "__main__":
-    DUMP_PATH = os.path.join(os.environ['HOME'], 'workspace/cgt/tmp')
+    DUMP_PATH = os.path.join(os.environ['HOME'],
+                             'workspace/cgt/tmp/_%d' % int(time.time()))
     #################3#####
     #  for synthetic data #
     #######################
@@ -287,7 +302,7 @@ if __name__ == "__main__":
         num_sto=[1],
         no_bias=False,
         # param_penal_wt=1.e-4,
-        n_epochs=60,
+        n_epochs=30,
         step_size=.01,
         decay_rate=.95,
         size_sample=20,  # #times to sample the network per data pair
@@ -295,7 +310,7 @@ if __name__ == "__main__":
         init_conf=nn.XavierNormal(scale=1.),
         # snapshot=os.path.join(DUMP_PATH, 'params.pkl')
     )
-    X_syn, Y_syn = data_simple_sigmoid(1000)
+    X_syn, Y_syn = data_simple_sigmoid(50)
     # X_syn, Y_syn = scale_data((X_syn, Y_syn))
     state = train(args_synthetic, X_syn, Y_syn,
                   **example_debug(args_synthetic, X_syn, Y_syn, DUMP_PATH))
