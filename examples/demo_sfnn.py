@@ -26,6 +26,13 @@ np.set_printoptions(precision=4, suppress=True)
 print cgt.get_config(True)
 
 
+def scale_data(Xs, scalars=None):
+    if not scalars:
+        scalars = [StandardScaler() for _ in range(len(Xs))]
+    assert len(scalars) == len(Xs)
+    Xs = [scalar.fit_transform(X) for X, scalar in zip(Xs, scalars)]
+    return Xs
+
 def generate_examples(N, x, y, p_y):
     X = x * np.ones((N, x.size))
     Y = y * np.ones((N, y.size))
@@ -36,15 +43,6 @@ def generate_examples(N, x, y, p_y):
     np.random.shuffle(Y)
     return X, Y
 
-
-def scale_data(Xs, scalars=None):
-    if not scalars:
-        scalars = [StandardScaler() for _ in range(len(Xs))]
-    assert len(scalars) == len(Xs)
-    Xs = [scalar.fit_transform(X) for X, scalar in zip(Xs, scalars)]
-    return Xs
-
-
 def data_synthetic_a(N):
     # x = y + 0.3 sin(2 * pi * y) + e, e ~ Unif(-0.1, 0.1)
     Y = np.random.uniform(0., 1., N)
@@ -52,12 +50,12 @@ def data_synthetic_a(N):
     Y, X = Y.reshape((N, 1)), X.reshape((N, 1))
     return X, Y
 
-
-def data_simple_sigmoid(N):
+def data_sigm_multi(N, k):
     X = np.random.uniform(-10., 10., N)
     Y = sigmoid(X)
     Y += np.random.normal(0., .1, N)
-    Y += np.random.binomial(1, .3, N)
+    y = np.random.multinomial(1, [1./k]*k, size=N)
+    Y += np.nonzero(y)[1]
     Y, X = Y.reshape((N, 1)), X.reshape((N, 1))
     return X, Y
 
@@ -281,7 +279,7 @@ if __name__ == "__main__":
         no_bias=False,
         # training parameters
         n_epochs=50,
-        step_size=.01,
+        step_size=.05,
         decay_rate=.95,
         size_sample=20,  # #times to sample the network per data pair
         size_batch=1,  # #data pairs for each gradient estimate
@@ -291,7 +289,7 @@ if __name__ == "__main__":
         # debugging
         dbg_samples=100,
     )
-    X, Y = data_synthetic_a(500)
+    X, Y = data_sigm_multi(500, 2)
     # X, Y = scale_data((X, Y))
     state = train(example_args, X, Y,
                   **example_debug(example_args, X, Y, DUMP_PATH))
