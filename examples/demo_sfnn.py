@@ -53,19 +53,11 @@ def data_synthetic_a(N):
     return X, Y
 
 
-def data_simple(N):
-    X = np.random.uniform(0., 1., N)
-    # change the mult to 2., does not work as well
-    Y = X + 1. * np.random.normal(0., .1, N)
-    Y += np.random.binomial(1, 0.5, N)
-    Y, X = Y.reshape((N, 1)), X.reshape((N, 1))
-    return X, Y
-
 def data_simple_sigmoid(N):
     X = np.random.uniform(-10., 10., N)
     Y = sigmoid(X)
     Y += np.random.normal(0., .1, N)
-    Y += np.random.binomial(1, .5, N)
+    Y += np.random.binomial(1, .3, N)
     Y, X = Y.reshape((N, 1)), X.reshape((N, 1))
     return X, Y
 
@@ -100,14 +92,10 @@ def hybrid_network(size_in, size_out, num_units, num_stos, dbg_out=[]):
         prev_num_units = curr_num_units
         dbg_out.extend(_layer_dbg_out)
         dbg_out.append(prev_out)
-    # TODO_TZ bigger problem! param cannot deterministically influence cost
-    #         otherwise the surrogate cost is not complete log likelihood
     net_out = nn.Affine(prev_num_units, size_out,
                         name="InnerProd(%d->%d)" % (prev_num_units, size_out)
                         )(prev_out)
     dbg_out.append(net_out)
-    # assert prev_num_units == size_out
-    # net_out = prev_out
     return X, net_out
 
 
@@ -125,7 +113,7 @@ def make_funcs(net_in, net_out, config, dbg_out=None):
     # loss_raw of shape (size_batch, 1); loss should be a scalar
     # sum-of-squares loss
     sigma = 0.1
-    loss_raw = -cgt.sum((net_out - Y) ** 2, axis=1, keepdims=True) / sigma
+    loss_raw = -.5 * cgt.sum((net_out - Y) ** 2, axis=1, keepdims=True) / sigma
     # negative log-likelihood
     # out_sigma = cgt.exp(net_out[:, size_out:]) + 1.e-6  # positive sigma
     # loss_raw = -gaussian_diagonal.logprob(
@@ -177,14 +165,6 @@ def train(args, X, Y, dbg_iter=None, dbg_epoch=None, dbg_done=None):
         print "Loading params from previous snapshot"
         snapshot = pickle.load(open(args['snapshot'], 'r'))
         param_col.set_values(snapshot)
-    # param_col.set_value_flat(
-    #     np.random.normal(0., 1.,size=param_col.get_total_size())
-    # )
-    # optim_state = Table(theta=param_col.get_value_flat(),
-    #                     scratch=param_col.get_value_flat(),
-    #                     step_size=args.step_size
-    #                     )
-
     optim_state = make_rmsprop_state(theta=param_col.get_value_flat(),
                                      step_size=args.step_size,
                                      decay_rate=args.decay_rate)
@@ -196,10 +176,7 @@ def train(args, X, Y, dbg_iter=None, dbg_epoch=None, dbg_done=None):
             grad = info['grad']
             # update
             rmsprop_update(param_col.flatten_values(grad), optim_state)
-            # optim_state.scratch = param_col.flatten_values(grad)
-            # optim_state.theta -= optim_state.step_size * optim_state.scratch
             param_col.set_value_flat(optim_state.theta)
-            print param_col.get_value_flat()
             if dbg_iter: dbg_iter(i_epoch, i_iter, param_col, optim_state, info)
         if dbg_epoch: dbg_epoch(i_epoch, param_col, f_surr)
     if dbg_done: dbg_done(param_col, optim_state, f_surr)
@@ -219,7 +196,7 @@ def example_debug(args, X, Y, out_path='.'):
     plt_colors = ['b', 'g', 'r', 'c', 'm', 'y', 'k']
     plt_kwargs = [{'marker': m, 'color': c, 's': 10}
                   for m in plt_markers for c in plt_colors]
-    size_sample, max_plots = 50, 5
+    size_sample, max_plots = args['dbg_samples'], 5
     conv_smoother = lambda x: np.convolve(x, [1. / N] * N, mode='valid')
     # cache
     ep_samples = []
@@ -237,7 +214,7 @@ def example_debug(args, X, Y, out_path='.'):
         print "Epoch %d" % i_epoch
         print "network parameters"
         _params_val = param_col.get_values()
-        # pprint.pprint(_params_val)
+        pprint.pprint(_params_val)
         # sample the network to track progress
         s_X = np.random.choice(X.flatten(), size=(size_sample, 1), replace=False)
         info = f_surr(s_X, np.zeros_like(s_X), sample_only=True, num_samples=1)
@@ -295,25 +272,29 @@ if __name__ == "__main__":
     #################3#####
     #  for synthetic data #
     #######################
-    args_synthetic = Table(
+    example_args = Table(
+        # network architecture
         num_inputs=1,
         num_outputs=1,
         num_units=[2],
         num_sto=[1],
         no_bias=False,
-        # param_penal_wt=1.e-4,
-        n_epochs=30,
+        # training parameters
+        n_epochs=50,
         step_size=.01,
         decay_rate=.95,
         size_sample=20,  # #times to sample the network per data pair
         size_batch=1,  # #data pairs for each gradient estimate
         init_conf=nn.XavierNormal(scale=1.),
+        # param_penal_wt=1.e-4,
         # snapshot=os.path.join(DUMP_PATH, 'params.pkl')
+        # debugging
+        dbg_samples=100,
     )
-    X_syn, Y_syn = data_simple_sigmoid(50)
-    # X_syn, Y_syn = scale_data((X_syn, Y_syn))
-    state = train(args_synthetic, X_syn, Y_syn,
-                  **example_debug(args_synthetic, X_syn, Y_syn, DUMP_PATH))
+    X, Y = data_synthetic_a(500)
+    # X, Y = scale_data((X, Y))
+    state = train(example_args, X, Y,
+                  **example_debug(example_args, X, Y, DUMP_PATH))
 
     # X, Y = generate_examples(10, np.array([3.]), np.array([0.]), [.1])
     # X1, Y1 = generate_examples(10,

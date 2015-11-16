@@ -862,8 +862,6 @@ def get_surrogate_func(_inputs, _outputs, _costs, _wrt):
         assert all([i.ndim == 2 for i in inputs]), 'each input of shape (size_batch, size_in)'
         m = int(kwargs.pop('num_samples', 1))
         assert m > 0, 'positive number of samples'
-        if m == 1:
-            warnings.warn('Sampling network only once')
         if m > 1 and not _args_rand:
             warnings.warn('Sample multiple times on a deterministic graph')
         inputs = [np.repeat(i, m, axis=0) for i in inputs]  # not sure this works for multi-dim
@@ -874,6 +872,7 @@ def get_surrogate_func(_inputs, _outputs, _costs, _wrt):
         if not kwargs.pop('sample_only', False):
             # does not help with multiple examples
             assert all([i.shape[0] == m for i in inputs]), "one example at a time"
+            if m == 1: warnings.warn('Sampling network only once')
             obj, obj_vec, wt_vec, obj_unwt_vec, grad_obj = \
                 f_surr_parser(f_surr(*(list(inputs) + s_rand + s_loss)))
             res['objective'] = obj  # scalar
