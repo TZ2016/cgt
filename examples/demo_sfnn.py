@@ -12,7 +12,7 @@ from sklearn.preprocessing import StandardScaler
 from scipy.special import expit as sigmoid
 from param_collection import ParamCollection
 from cgt.distributions import gaussian_diagonal
-from demo_char_rnn import Table, make_rmsprop_state, rmsprop_update
+from demo_char_rnn import Table, make_rmsprop_state
 
 
 def err_handler(type, flag):
@@ -122,7 +122,8 @@ def make_funcs(net_in, net_out, config, dbg_out=None):
     f_step = cgt.function([net_in], [net_out])
     # loss_raw of shape (size_batch, 1); loss should be a scalar
     # sum-of-squares loss
-    loss_raw = cgt.sum((net_out - Y) ** 2, axis=1, keepdims=True)
+    sigma = 0.1
+    loss_raw = -cgt.sum((net_out - Y) ** 2, axis=1, keepdims=True) / sigma
     # negative log-likelihood
     # out_sigma = cgt.exp(net_out[:, size_out:]) + 1.e-6  # positive sigma
     # loss_raw = -gaussian_diagonal.logprob(
@@ -144,6 +145,20 @@ def make_funcs(net_in, net_out, config, dbg_out=None):
                                 [net_out] + dbg_out,
                                 [loss_raw], params)
     return params, f_step, f_loss, f_grad, f_surr
+
+
+def rmsprop_update(grad, state):
+    state.sqgrad[:] *= state.decay_rate
+    state.count *= state.decay_rate
+    np.square(grad, out=state.scratch) # scratch=g^2
+    state.sqgrad += state.scratch
+    state.count += 1
+    np.sqrt(state.sqgrad, out=state.scratch) # scratch = sum of squares
+    np.divide(state.scratch, np.sqrt(state.count), out=state.scratch) # scratch = rms
+    np.divide(grad, state.scratch, out=state.scratch) # scratch = grad/rms
+    np.multiply(state.scratch, state.step_size, out=state.scratch)
+    state.theta[:] += state.scratch
+    # TIANHAO_TZ double check "+=" is the only change
 
 
 def train(args, X, Y, dbg_iter=None, dbg_epoch=None, dbg_done=None):
@@ -174,6 +189,7 @@ def train(args, X, Y, dbg_iter=None, dbg_epoch=None, dbg_done=None):
     #                     scratch=param_col.get_value_flat(),
     #                     step_size=args.step_size
     #                     )
+
     optim_state = make_rmsprop_state(theta=param_col.get_value_flat(),
                                      step_size=args.step_size,
                                      decay_rate=args.decay_rate)
