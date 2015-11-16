@@ -198,7 +198,7 @@ def train(args, X, Y, dbg_iter=None, dbg_epoch=None, dbg_done=None):
             ind = np.random.choice(X.shape[0], args['size_batch'])
             x, y = X[ind], Y[ind]  # not sure this works for multi-dim
             info = f_surr(x, y, num_samples=args['size_sample'])
-            loss, loss_surr, grad = info['loss'], info['surr_loss'], info['surr_grad']
+            grad = info['grad']
             # loss, loss_surr, grad = f_grad(x, y)
             # update
             rmsprop_update(param_col.flatten_values(grad), optim_state)
@@ -227,12 +227,12 @@ def example_debug(args, X, Y, out_path='.'):
     it_grad_norm, it_theta_norm = [], []
     it_loss, it_loss_surr = [], []
     def dbg_iter(i_epoch, i_iter, param_col, optim_state, info):
-        loss, loss_surr = info['loss'], info['surr_loss']
-        it_loss.append(np.sum(loss))
+        loss_surr = info['objective']
+        # it_loss.append(np.sum(loss))
         it_loss_surr.append(loss_surr)
         it_grad_norm.append(np.linalg.norm(optim_state.scratch))
         it_theta_norm.append(np.linalg.norm(optim_state.theta))
-        it_grad_norm_comp.append([np.linalg.norm(g) for g in info['surr_grad']])
+        it_grad_norm_comp.append([np.linalg.norm(g) for g in info['grad']])
     def dbg_epoch(i_epoch, param_col, f_surr):
         print "Epoch %d" % i_epoch
         print "network parameters"
@@ -297,12 +297,12 @@ if __name__ == "__main__":
         n_epochs=60,
         step_size=.01,
         decay_rate=.95,
-        size_sample=4,  # #times to sample the network per data pair
-        size_batch=100,  # #data pairs for each gradient estimate
+        size_sample=20,  # #times to sample the network per data pair
+        size_batch=1,  # #data pairs for each gradient estimate
         init_conf=nn.XavierNormal(scale=1.),
         # snapshot=os.path.join(DUMP_PATH, 'params.pkl')
     )
-    X_syn, Y_syn = data_simple_sigmoid(100)
+    X_syn, Y_syn = data_simple_sigmoid(1000)
     # X_syn, Y_syn = scale_data((X_syn, Y_syn))
     state = train(args_synthetic, X_syn, Y_syn,
                   **example_debug(args_synthetic, X_syn, Y_syn, DUMP_PATH))

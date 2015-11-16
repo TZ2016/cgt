@@ -776,7 +776,7 @@ def _get_surr_costs(costs):
     all_nodes = list(topsorted(costs))
     cost_vals = dict(zip(costs, _as_argument(costs)))
     rand_vals = {}  # sampled values for each stochastic node
-    new_costs = {}  # new surrogate costs for each stochastic node
+    new_costs = []  # new surrogate costs for each stochastic node
     curr_costs = []  # book-keeping future costs w.r.t. current traversal
     for node in reversed(all_nodes):
         if node in costs:
@@ -785,17 +785,22 @@ def _get_surr_costs(costs):
             future_cost = cgt.add_multi([cost_vals[c] for c in curr_costs])
             rand_val = _as_argument(node)
             # TODO_TZ error-prone, but introduce a new method in Node seems an over-kill
-            # log probability, of same shape as rand_val for Bernoulli
+            # log P(h_curr | x, h_prev), of same shape as rand_val for Bernoulli
             logprob = node.op.distr.logprob(rand_val, *node.parents)
             # (size_batch, size_sto) * (size_batch, 1) -> (size_batch, size_sto)
-            new_cost = cgt.broadcast('*', logprob, future_cost, 'xx,x1')
-            rand_vals[node], new_costs[node] = rand_val, new_cost
+            # new_cost = cgt.broadcast('*', logprob, future_cost, 'xx,x1')
+            # TODO_TZ Warning: this is no longer graph conversion
+            # assume cost is P(y|h, x)
+            new_cost = logprob
+            rand_vals[node] = rand_val
+            new_costs.append(new_cost)
     # sever backward path involving stochastic nodes
     for node in reversed(all_nodes):
         # TODO_TZ directly re-assign parents may not be good
         node.parents = [rand_vals[p] if p.is_random() else p for p in node.parents]
     # TODO_TZ maybe some old costs are dangling, remove them
-    total_surr_costs = _merge_costs(costs + new_costs.values())
+    # with \sum new_costs = log P(h|x); surr_costs = log P(y, h|x)
+    total_surr_costs = _merge_costs(costs + new_costs)
     args_rand = {mappings_inv[k]: v for k, v in rand_vals.iteritems()}
     args_cost = {mappings_inv[k]: v for k, v in cost_vals.iteritems()}
     # shape: (size_batch, 1), (size_batch, 1), (size_batch, size_sto)
@@ -806,6 +811,8 @@ def _get_surr_costs(costs):
 def get_surrogate_func(inputs, outputs, costs, wrt):
     def surr_func_wrapper(*_inputs, **kwargs):
         """Given real-valued inputs, return outputs using sampled values """
+        # TODO_TZ importance sampling only supports single example
+        assert np.all([_i.shape[0] == 1 for _i in _inputs])
         m = int(kwargs.pop('num_samples', 1))
         assert m > 0
         if m == 1:
@@ -817,33 +824,49 @@ def get_surrogate_func(inputs, outputs, costs, wrt):
         net_out, sample = _out[:len(outputs)], _out[len(outputs):]
         s_rand, s_loss = sample[:len(args_rand.keys())], sample[len(args_rand.keys()):]
         _out = f_surr(*(list(_inputs) + sample))
-        surr_loss, surr_loss_raw, surr_grad = _out[0], _out[1], _out[2:]
-        # TODO_TZ this is ugly, fix this
+        obj, obj_raw, weights, unwt_obj, surr_grad = \
+            _out[0], _out[1], _out[2], _out[3], _out[4:]
+        # TODO_TZ this is ugly, fix this (locals()?)
         return {
             # inputs:
             'inputs': _inputs,
-            # scalar; importance weighted mean of surrogate loss to minimize
-            'surr_loss': surr_loss,
-            # (num_samples, 1); surrogate loss for each sample
-            'surr_loss_raw': surr_loss_raw,
+            # scalar; complete data log likelihood (objective function)
+            'objective': obj,
+            # (num_samples, 1);
+            'objective_raw': obj_raw,
             # (num_samples, 1); original loss for each sample
-            'loss': s_loss,
+            # 'loss': s_loss,
+            # (num_samples, 1); importance weights
+            'weights': weights,
+            # (num_samples, 1); unweighted loss
+            'objective_unweighted': unwt_obj,
             # list[shape(param)]; gradient of each param
-            'surr_grad': surr_grad,
+            'grad': surr_grad,
             # list[(num_samples, size_sto)]; samples for each stochastic unit
             'sample': s_rand,
             # list[(num_samples, size_out)]; outputs of original net
             'net_out': net_out
         }
     assert isinstance(inputs, list) and isinstance(outputs, list)
+    # note that surr_cost_raw is defined in the new graph
+    # for the rest, keys belong to the old graph, and values the new
     surr_cost_raw, args_cost, args_rand = _get_surr_costs(costs)
-    # TODO_TZ importance sampling weights go below
-    surr_costs = cgt.mean(surr_cost_raw)
-    grad_surr = grad(surr_costs, wrt)
-    f_sample = cgt.function(inputs,
-                            outputs + args_rand.keys() + args_cost.keys())
-    f_surr = cgt.function(inputs + args_rand.values() + args_cost.values(),
-                          [surr_costs, surr_cost_raw] + grad_surr)
+    # sample old graph to prepare sampled values for new graph
+    f_sample = cgt.function(
+        inputs,
+        outputs +  # user-specified arbitrary outputs
+        args_rand.keys() +  # sampled values of stochastic nodes
+        args_cost.keys()  # sampled downstream cost for stochastic nodes
+    )
+    # estimate gradient
+    imp_wts = cgt.exp(args_cost.values()[0])
+    imp_wts /= cgt.sum(imp_wts)
+    complete_ll_raw = imp_wts * surr_cost_raw
+    complete_ll = cgt.sum(complete_ll_raw)
+    grad_surr = grad(complete_ll, wrt)
+    f_surr = cgt.function(
+        inputs + args_rand.values() + args_cost.values(),
+        [complete_ll, complete_ll_raw, imp_wts, surr_cost_raw] + grad_surr)
     return surr_func_wrapper
 
 # ================================================================
