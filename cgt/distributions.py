@@ -31,7 +31,8 @@ class _Bernoulli(Distribution):
     def logprob(self, x, p):
         """ Element-wise log prob for each component in x """
         p = core.as_node(p)
-        l = x * cgt.log(p) + (1 - x) * cgt.log(1 - p)
+        # TODO_TZ p can be almost 0 or 1. Below is not a good solution!
+        l = x * cgt.log(p + 1.e-10) + (1 - x) * cgt.log(1 - p + 1.e-10)
         return l
     def sample(self, p, shape=None, numeric=False):
         """ Element-wise sampling for each component of p """
