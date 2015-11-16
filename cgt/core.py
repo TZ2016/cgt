@@ -769,7 +769,7 @@ def _get_surr_costs(costs):
     back-propagating error information.
     """
     if isinstance(costs, Node): costs = [costs]
-    assert np.all([c.ndim == 2 for c in costs]), "cost of shape (size_batch,1)"
+    assert all([c.ndim == 2 for c in costs]), "cost of shape (size_batch,1)"
     costs = _decompose_costs(costs)
     mappings = {}  # map from original node to cloned ones
     costs = clone(costs, mappings=mappings)
@@ -810,6 +810,31 @@ def _get_surr_costs(costs):
         warnings.warn('Conversion on already deterministic graph')
     return total_surr_costs, args_cost, args_rand
 
+def _multi_slice(*lst):
+    def _slicer(x, indices, singleton):
+        assert len(x) == indices[-1] and len(indices) == len(singleton) + 1
+        out = []
+        for i in range(len(indices)-1):
+            o = x[indices[i]:indices[i+1]]
+            if singleton[i]:
+                out.extend(o)
+            else:
+                out.append(o)
+        return out
+    args = []
+    indices, singleton, curr_i = [0], [], 0
+    for o in lst:
+        if not isinstance(o, (list, tuple)):
+            singleton.append(True)
+            o = [o]
+        else:
+            singleton.append(False)
+        assert all([isinstance(i, Node) for i in o])
+        curr_i += len(o)
+        indices.append(curr_i)
+        args.extend(o)
+    return args, lambda x: _slicer(x, indices, singleton)
+
 def get_surrogate_func(_inputs, _outputs, _costs, _wrt):
     """
     Internally convert a stochastic computation graph to a deterministic one
@@ -834,20 +859,17 @@ def get_surrogate_func(_inputs, _outputs, _costs, _wrt):
         """
         """Given real-valued inputs, return outputs using sampled values """
         # TODO_TZ importance sampling only supports single example
-        assert np.all([_i.shape[0] == 1 and _i.ndim == 2 for _i in inputs])
+        assert all([i.shape[0] == 1 and i.ndim == 2 for i in inputs])
         m = int(kwargs.pop('num_samples', 1))
         assert m > 0
         if m == 1:
             warnings.warn('Sampling network only once')
         if m > 1 and not _args_rand:
             warnings.warn('Sample multiple times on a deterministic graph')
-        inputs = [np.repeat(_i, m, axis=0) for _i in inputs]  # not sure this works for multi-dim
-        t_out = f_sample(*inputs)
-        net_out, sample = t_out[:len(_outputs)], t_out[len(_outputs):]
-        s_rand, s_loss = sample[:len(_args_rand.keys())], sample[len(_args_rand.keys()):]
-        t_out = f_surr(*(list(inputs) + sample))
+        inputs = [np.repeat(i, m, axis=0) for i in inputs]  # not sure this works for multi-dim
+        net_out, s_rand, s_loss = f_sample_parser(f_sample(*inputs))
         obj, obj_vec, wt_vec, obj_unwt_vec, grad_obj = \
-            t_out[0], t_out[1], t_out[2], t_out[3], t_out[4:]
+            f_surr_parser(f_surr(*(list(inputs) + s_rand + s_loss)))
         # TODO_TZ this is ugly, fix this (locals()?)
         return {
             # inputs:
@@ -872,7 +894,7 @@ def get_surrogate_func(_inputs, _outputs, _costs, _wrt):
     # for the rest, keys belong to the old graph, and values the new
     _obj_unwt_vec, _args_cost, _args_rand = _get_surr_costs(_costs)
     # importance weights: P(y|h, x) scaled. by P(y|x) = \sum P(y|h,x)
-    _wt_vec = cgt.exp(_args_cost.values()[0])  # [0] is just a makeshift
+    _wt_vec = cgt.exp(_args_cost.values()[0])  # TIANHAO_TZ [0] is just a makeshift
     _wt_vec /= cgt.sum(_wt_vec)
     # true objective, or expected complete log-lik: log P(y|x)
     # before weighting: log P(h|x) + log P(y|h,x) = log P(y,h|x)
@@ -880,16 +902,19 @@ def get_surrogate_func(_inputs, _outputs, _costs, _wrt):
     _obj = cgt.sum(_obj_vec)
     _grad_obj = grad(_obj, _wrt)
     # function for sampling old graph to prepare inputs for new graph
-    f_sample = cgt.function(
-        _inputs,
-        _outputs +  # user-specified arbitrary outputs
-        _args_rand.keys() +  # sampled values of stochastic nodes
+    _f_sample_out, f_sample_parser = _multi_slice(
+        _outputs,  # user-specified arbitrary outputs
+        _args_rand.keys(),  # sampled values of stochastic nodes
         _args_cost.keys()  # sampled downstream cost for stochastic nodes
     )
+    f_sample = cgt.function(_inputs, _f_sample_out)
     # function for calculating gradient of the true loss
+    _f_surr_out, f_surr_parser = _multi_slice(
+        _obj, _obj_vec, _wt_vec, _obj_unwt_vec, _grad_obj
+    )
     f_surr = cgt.function(
-        _inputs + _args_rand.values() + _args_cost.values(),
-        [_obj, _obj_vec, _wt_vec, _obj_unwt_vec] + _grad_obj)
+        _inputs + _args_rand.values() + _args_cost.values(), _f_surr_out
+    )
     return surr_func_wrapper
 
 # ================================================================
