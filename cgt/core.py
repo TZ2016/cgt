@@ -764,8 +764,9 @@ def _get_surr_costs(costs):
     The resulting deterministic graph is coupled with the input graph, any
     operation on the input graph will potentially invalidate the result.
     This method first clones the input graph and transform the cloned graph
-    in place. Stochastic components are replaced by new Argument nodes which
-    assume their sampled values.
+    in place. Each stochastic node is replaced by an Argument node, which
+    assumes its sampled value, and a surrogate cost term, which allows for
+    back-propagating error information.
     """
     if isinstance(costs, Node): costs = [costs]
     assert np.all([c.ndim == 2 for c in costs]), "cost of shape (size_batch,1)"
@@ -782,8 +783,8 @@ def _get_surr_costs(costs):
         if node in costs:
             curr_costs.append(node)
         if node.is_random():
-            future_cost = cgt.add_multi([cost_vals[c] for c in curr_costs])
             rand_val = _as_argument(node)
+            # future_cost = cgt.add_multi([cost_vals[c] for c in curr_costs])
             # TODO_TZ error-prone, but introduce a new method in Node seems an over-kill
             # log P(h_curr | x, h_prev), of same shape as rand_val for Bernoulli
             logprob = node.op.distr.logprob(rand_val, *node.parents)
@@ -797,7 +798,8 @@ def _get_surr_costs(costs):
     # sever backward path involving stochastic nodes
     for node in reversed(all_nodes):
         # TODO_TZ directly re-assign parents may not be good
-        node.parents = [rand_vals[p] if p.is_random() else p for p in node.parents]
+        node.parents = [rand_vals[p] if p.is_random() else p
+                        for p in node.parents]
     # TODO_TZ maybe some old costs are dangling, remove them
     # with \sum new_costs = log P(h|x); surr_costs = log P(y, h|x)
     total_surr_costs = _merge_costs(costs + new_costs)
@@ -808,65 +810,86 @@ def _get_surr_costs(costs):
         warnings.warn('Conversion on already deterministic graph')
     return total_surr_costs, args_cost, args_rand
 
-def get_surrogate_func(inputs, outputs, costs, wrt):
-    def surr_func_wrapper(*_inputs, **kwargs):
+def get_surrogate_func(_inputs, _outputs, _costs, _wrt):
+    """
+    Internally convert a stochastic computation graph to a deterministic one
+    to allow for convenient back-propagation algorithm to perform gradient
+    estimation.
+
+    :param _inputs: full list of arguments to the stochastic graph
+    :param _outputs: arbitrary outputs from the stochastic graph
+    :param _costs: list of costs for the stochastic graph, of shape (size_batch, 1)
+    :param _wrt: list of parameters for gradient estimates
+    :return: a function that calculates gradient estimates given inputs
+    """
+    def surr_func_wrapper(*inputs, **kwargs):
+        """
+        This function serves as an interface for gradient calculation on a
+        stochastic computation graph. Given real-valued inputs to the graph,
+        returns real-valued gradients.
+
+        :param inputs: real-valued inputs for "_inputs" in outer function
+        :param kwargs:
+            'num_samples': number of samples for gradient estimation
+        """
         """Given real-valued inputs, return outputs using sampled values """
         # TODO_TZ importance sampling only supports single example
-        assert np.all([_i.shape[0] == 1 for _i in _inputs])
+        assert np.all([_i.shape[0] == 1 and _i.ndim == 2 for _i in inputs])
         m = int(kwargs.pop('num_samples', 1))
         assert m > 0
         if m == 1:
             warnings.warn('Sampling network only once')
-        if m > 1 and not args_rand:
+        if m > 1 and not _args_rand:
             warnings.warn('Sample multiple times on a deterministic graph')
-        _inputs = [np.repeat(_i, m, axis=0) for _i in _inputs]  # not sure this works for multi-dim
-        _out = f_sample(*_inputs)
-        net_out, sample = _out[:len(outputs)], _out[len(outputs):]
-        s_rand, s_loss = sample[:len(args_rand.keys())], sample[len(args_rand.keys()):]
-        _out = f_surr(*(list(_inputs) + sample))
-        obj, obj_raw, weights, unwt_obj, surr_grad = \
-            _out[0], _out[1], _out[2], _out[3], _out[4:]
+        inputs = [np.repeat(_i, m, axis=0) for _i in inputs]  # not sure this works for multi-dim
+        t_out = f_sample(*inputs)
+        net_out, sample = t_out[:len(_outputs)], t_out[len(_outputs):]
+        s_rand, s_loss = sample[:len(_args_rand.keys())], sample[len(_args_rand.keys()):]
+        t_out = f_surr(*(list(inputs) + sample))
+        obj, obj_vec, wt_vec, obj_unwt_vec, grad_obj = \
+            t_out[0], t_out[1], t_out[2], t_out[3], t_out[4:]
         # TODO_TZ this is ugly, fix this (locals()?)
         return {
             # inputs:
-            'inputs': _inputs,
+            'inputs': inputs,
             # scalar; complete data log likelihood (objective function)
             'objective': obj,
             # (num_samples, 1);
-            'objective_raw': obj_raw,
-            # (num_samples, 1); original loss for each sample
-            # 'loss': s_loss,
+            'objective_vec': obj_vec,
             # (num_samples, 1); importance weights
-            'weights': weights,
+            'weights': wt_vec,
             # (num_samples, 1); unweighted loss
-            'objective_unweighted': unwt_obj,
+            'objective_unweighted': obj_unwt_vec,
             # list[shape(param)]; gradient of each param
-            'grad': surr_grad,
+            'grad': grad_obj,
             # list[(num_samples, size_sto)]; samples for each stochastic unit
-            'sample': s_rand,
+            'samples': s_rand,
             # list[(num_samples, size_out)]; outputs of original net
-            'net_out': net_out
+            'outputs': net_out
         }
-    assert isinstance(inputs, list) and isinstance(outputs, list)
-    # note that surr_cost_raw is defined in the new graph
+    assert isinstance(_inputs, list) and isinstance(_outputs, list)
+    # note that _obj_unwt_vec is defined in the new graph
     # for the rest, keys belong to the old graph, and values the new
-    surr_cost_raw, args_cost, args_rand = _get_surr_costs(costs)
-    # sample old graph to prepare sampled values for new graph
+    _obj_unwt_vec, _args_cost, _args_rand = _get_surr_costs(_costs)
+    # importance weights: P(y|h, x) scaled. by P(y|x) = \sum P(y|h,x)
+    _wt_vec = cgt.exp(_args_cost.values()[0])  # [0] is just a makeshift
+    _wt_vec /= cgt.sum(_wt_vec)
+    # true objective, or expected complete log-lik: log P(y|x)
+    # before weighting: log P(h|x) + log P(y|h,x) = log P(y,h|x)
+    _obj_vec = _wt_vec * _obj_unwt_vec
+    _obj = cgt.sum(_obj_vec)
+    _grad_obj = grad(_obj, _wrt)
+    # function for sampling old graph to prepare inputs for new graph
     f_sample = cgt.function(
-        inputs,
-        outputs +  # user-specified arbitrary outputs
-        args_rand.keys() +  # sampled values of stochastic nodes
-        args_cost.keys()  # sampled downstream cost for stochastic nodes
+        _inputs,
+        _outputs +  # user-specified arbitrary outputs
+        _args_rand.keys() +  # sampled values of stochastic nodes
+        _args_cost.keys()  # sampled downstream cost for stochastic nodes
     )
-    # estimate gradient
-    imp_wts = cgt.exp(args_cost.values()[0])
-    imp_wts /= cgt.sum(imp_wts)
-    complete_ll_raw = imp_wts * surr_cost_raw
-    complete_ll = cgt.sum(complete_ll_raw)
-    grad_surr = grad(complete_ll, wrt)
+    # function for calculating gradient of the true loss
     f_surr = cgt.function(
-        inputs + args_rand.values() + args_cost.values(),
-        [complete_ll, complete_ll_raw, imp_wts, surr_cost_raw] + grad_surr)
+        _inputs + _args_rand.values() + _args_cost.values(),
+        [_obj, _obj_vec, _wt_vec, _obj_unwt_vec] + _grad_obj)
     return surr_func_wrapper
 
 # ================================================================
