@@ -847,7 +847,7 @@ def get_surrogate_func(_inputs, _outputs, _costs, _wrt):
     :param _wrt: list of parameters for gradient estimates
     :return: a function that calculates gradient estimates given inputs
     """
-    def surr_func_wrapper(*inputs, **kwargs):
+    def f_grad(*inputs, **kwargs):
         """
         This function serves as an interface for gradient calculation on a
         stochastic computation graph. Given real-valued inputs to the graph,
@@ -855,40 +855,33 @@ def get_surrogate_func(_inputs, _outputs, _costs, _wrt):
 
         :param inputs: real-valued inputs for "_inputs" in outer function
         :param kwargs:
-            'num_samples': number of samples for gradient estimation
+            num_samples: number of samples for gradient estimation
+            sample_only: only sample the original graph without gradients
         """
-        """Given real-valued inputs, return outputs using sampled values """
-        # TODO_TZ importance sampling only supports single example
-        assert all([i.shape[0] == 1 and i.ndim == 2 for i in inputs])
+        res = {}
+        assert all([i.ndim == 2 for i in inputs]), 'each input of shape (size_batch, size_in)'
         m = int(kwargs.pop('num_samples', 1))
-        assert m > 0
+        assert m > 0, 'positive number of samples'
         if m == 1:
             warnings.warn('Sampling network only once')
         if m > 1 and not _args_rand:
             warnings.warn('Sample multiple times on a deterministic graph')
         inputs = [np.repeat(i, m, axis=0) for i in inputs]  # not sure this works for multi-dim
         net_out, s_rand, s_loss = f_sample_parser(f_sample(*inputs))
-        obj, obj_vec, wt_vec, obj_unwt_vec, grad_obj = \
-            f_surr_parser(f_surr(*(list(inputs) + s_rand + s_loss)))
-        # TODO_TZ this is ugly, fix this (locals()?)
-        return {
-            # inputs:
-            'inputs': inputs,
-            # scalar; complete data log likelihood (objective function)
-            'objective': obj,
-            # (num_samples, 1);
-            'objective_vec': obj_vec,
-            # (num_samples, 1); importance weights
-            'weights': wt_vec,
-            # (num_samples, 1); unweighted loss
-            'objective_unweighted': obj_unwt_vec,
-            # list[shape(param)]; gradient of each param
-            'grad': grad_obj,
-            # list[(num_samples, size_sto)]; samples for each stochastic unit
-            'samples': s_rand,
-            # list[(num_samples, size_out)]; outputs of original net
-            'outputs': net_out
-        }
+        res['inputs'] = inputs  # exact inputs passed into the net
+        res['outputs'] = net_out  # real-valued returns of "_outputs"
+        res['samples'] = s_rand  # list[(num_samples, size_sto)]; samples for each stochastic unit
+        if not kwargs.pop('sample_only', False):
+            # does not help with multiple examples
+            assert all([i.shape[0] == m for i in inputs]), "one example at a time"
+            obj, obj_vec, wt_vec, obj_unwt_vec, grad_obj = \
+                f_surr_parser(f_surr(*(list(inputs) + s_rand + s_loss)))
+            res['objective'] = obj  # scalar
+            res['objective_vec'] = obj_vec  # (num_samples, 1)
+            res['weights'] = wt_vec  # (num_samples, 1)
+            res['objective_unweighted'] = obj_unwt_vec  # (num_samples, 1)
+            res['grad'] = grad_obj  # list[shape(param)]; gradient of each param
+        return res
     assert isinstance(_inputs, list) and isinstance(_outputs, list)
     # note that _obj_unwt_vec is defined in the new graph
     # for the rest, keys belong to the old graph, and values the new
@@ -915,7 +908,7 @@ def get_surrogate_func(_inputs, _outputs, _costs, _wrt):
     f_surr = cgt.function(
         _inputs + _args_rand.values() + _args_cost.values(), _f_surr_out
     )
-    return surr_func_wrapper
+    return f_grad
 
 # ================================================================
 # Compilation 
