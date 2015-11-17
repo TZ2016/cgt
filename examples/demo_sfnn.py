@@ -104,7 +104,7 @@ def make_funcs(net_in, net_out, config, dbg_out=None):
     def f_sample(_inputs, num_samples=1, flatten=False):
         _outputs = f_step(_inputs)[0]
         _size_y = config['num_outputs'] // 2
-        _mean, _var = _outputs[:, :_size_y], _outputs[:, _size_y:] ** 2
+        _mean, _var = _outputs[:, :_size_y], _outputs[:, _size_y:]
         _samples = []
         for _m, _v in zip(_mean, _var):
             _s = np.random.multivariate_normal(_m, np.diag(np.sqrt(_v)), num_samples)
@@ -113,21 +113,20 @@ def make_funcs(net_in, net_out, config, dbg_out=None):
         return np.array(_samples)
     Y = cgt.matrix("Y")
     params = nn.get_parameters(net_out)
+    size_out, size_batch = Y.shape[1], net_in.shape[0]
     if 'no_bias' in config and config['no_bias']:
         print "Excluding bias"
         params = [p for p in params if not p.name.endswith(".b")]
-    size_out, size_batch = Y.shape[1], net_in.shape[0]
-    f_step = cgt.function([net_in], [net_out])
-    # loss_raw of shape (size_batch, 1); loss should be a scalar
-    # sum-of-squares loss
-    # sigma = 0.1
-    # loss_raw = -.5 * cgt.sum((net_out - Y) ** 2, axis=1, keepdims=True) / sigma
-    # negative log-likelihood
-    loss_raw = gaussian_diagonal.logprob(
-        Y, net_out[:, :size_out],
-        net_out[:, size_out:] ** 2 + 1.e-6
-        # cgt.fill(.01, [size_batch, size_out])
-    )
+    NET_OUTPUTS_VAR = True
+    if NET_OUTPUTS_VAR:  # net outputs variance
+        cutoff = net_out.shape[1] // 2
+        net_out_mean, net_out_var = net_out[:, :cutoff], net_out[:, cutoff:]
+        net_out_var = net_out_var ** 2 + 1.e-6
+        loss_raw = gaussian_diagonal.logprob(Y, net_out_mean, net_out_var)
+        net_out = cgt.concatenate([net_out_mean, net_out_var], axis=1)
+    else:
+        sigma = 0.1
+        loss_raw = -.5 * cgt.sum((net_out - Y) ** 2, axis=1, keepdims=True) / sigma
     if 'param_penal_wt' in config:
         print "Applying penalty on parameter norm"
         assert config['param_penal_wt'] > 0
@@ -137,6 +136,7 @@ def make_funcs(net_in, net_out, config, dbg_out=None):
         loss_raw += loss_param
     loss = cgt.sum(loss_raw) / size_batch
     # end of loss definition
+    f_step = cgt.function([net_in], [net_out])
     f_loss = cgt.function([net_in, Y], [net_out, loss])
     f_surr = get_surrogate_func([net_in, Y],
                                 [net_out] + dbg_out,
