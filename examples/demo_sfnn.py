@@ -169,16 +169,16 @@ def train(args, X, Y, dbg_iter=None, dbg_done=None):
     params, f_step, f_sample, _, f_surr = \
         make_funcs(net_in, net_out, args, dbg_out=dbg_out)
     param_col = ParamCollection(params)
-    init_params = nn.init_array(args.init_conf, (param_col.get_total_size(), 1))
-    param_col.set_value_flat(init_params.flatten())
     if 'snapshot' in args:
         print "Loading params from previous snapshot"
-        snapshot = pickle.load(open(args['snapshot'], 'r'))
-        param_col.set_values(snapshot)
-        # optim_state = pickle.load()
-    optim_state = make_rmsprop_state(theta=param_col.get_value_flat(),
-                                     step_size=args.step_size,
-                                     decay_rate=args.decay_rate)
+        optim_state = pickle.load(open(args['snapshot'], 'r'))
+    else:
+        optim_state = make_rmsprop_state(theta=param_col.get_value_flat(),
+                                         step_size=args.step_size,
+                                         decay_rate=args.decay_rate)
+        optim_state.theta = nn.init_array(
+            args.init_conf, (param_col.get_total_size(), 1)).flatten()
+    param_col.set_value_flat(optim_state.theta)
     num_epochs, num_iters = 0, 0
     while num_epochs < args['n_epochs']:
         ind = np.random.choice(X.shape[0], args['size_batch'])
@@ -235,9 +235,9 @@ def example_debug(args, X, Y, out_path='.'):
     def dbg_done(param_col, optim_state):
         # save params
         theta = param_col.get_values()
-        pickle.dump(theta, open(safe_path('params.pkl'), 'w'))
         pickle.dump(args, open(safe_path('args.pkl'), 'w'))
-        pickle.dump(optim_state, open(safe_path('state.pkl'), 'w'))
+        pickle.dump(theta, open(safe_path('params.pkl'), 'w'))
+        pickle.dump(optim_state, open(safe_path('__snapshot.pkl'), 'w'))
         plt.close('all')
         # plot overview
         plt.figure(); plt.suptitle('overview')
@@ -290,7 +290,7 @@ if __name__ == "__main__":
         size_batch=1,  # #data pairs for each gradient estimate
         init_conf=nn.XavierNormal(scale=1.),
         # param_penal_wt=1.e-4,
-        # snapshot=os.path.join(DUMP_ROOT, '_1447727435/params.pkl'),
+        # snapshot=os.path.join(DUMP_ROOT, '_1447739075/__snapshot.pkl'),
         # debugging
         dbg_batch=100,
         dbg_samples=10,
