@@ -892,8 +892,8 @@ def get_surrogate_func(_inputs, _outputs, _costs, _wrt):
     _obj_unwt_vec, _args_cost, _args_rand = _get_surr_costs(_costs)
     # importance weights: P(y|h, x) scaled. by P(y|x) = \sum P(y|h,x)
     _wt_vec = cgt.exp(_args_cost.values()[0])  # TODO_TZ [0] is just a makeshift
-    _wt_vec /= cgt.sum(_wt_vec)  # TODO_TZ this is risky
-    # _wt_vec = cgt.safe_div(_wt_vec, cgt.sum(_wt_vec))
+    # _wt_vec /= cgt.sum(_wt_vec)  # TODO_TZ this is risky
+    _wt_vec = cgt.safe_div(_wt_vec, cgt.sum(_wt_vec))
     # true objective, or expected complete log-lik: log P(y|x)
     # before weighting: log P(h|x) + log P(y|h,x) = log P(y,h|x)
     _obj_vec = _wt_vec * _obj_unwt_vec

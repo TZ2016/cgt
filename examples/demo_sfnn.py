@@ -22,7 +22,7 @@ def err_handler(type, flag):
     print type, flag
     traceback.print_stack()
     raise FloatingPointError('refer to err_handler for more details')
-np.seterr(divide='call', over='call', invalid='call')
+np.seterr(divide='call', over='warn', invalid='call', under='warn')
 np.seterrcall(err_handler)
 np.set_printoptions(precision=4, suppress=True)
 print cgt.get_config(True)
@@ -124,8 +124,8 @@ def make_funcs(net_in, net_out, config, dbg_out=None):
     else:  # net outputs variance
         cutoff = size_out // 2
         out_mean, out_var = net_out[:, :cutoff], net_out[:, cutoff:]
-        out_var = out_var ** 2 + 1.e-6
-        # out_var = cgt.exp(out_var) + 1.e-6
+        # out_var = out_var ** 2 + 1.e-6
+        out_var = cgt.exp(out_var) + 1.e-6
     net_out = [out_mean, out_var]
     loss_raw = gaussian_diagonal.logprob(Y, out_mean, out_var)
     if 'param_penal_wt' in config:
@@ -277,11 +277,11 @@ if __name__ == "__main__":
     example_args = Table(
         # network architecture
         num_inputs=1,
-        num_outputs=2,
+        num_outputs=1,
         num_units=[2, 4, 4],
         num_sto=[0, 2, 2],
         no_bias=False,
-        # const_var=.05,
+        const_var=.05,
         # training parameters
         n_epochs=20,
         step_size=.05,
