@@ -40,7 +40,7 @@ class _Bernoulli(Distribution):
             return cgt.rand(*shape) <= p
         else:
             assert isinstance(p, np.ndarray)
-            return np.array(nr.rand(*p.shape) <= p, dtype="i2")
+            return np.array(nr.rand(*p.shape) <= p)
 bernoulli = _Bernoulli()
 
 class _DiagonalGaussian(Distribution):

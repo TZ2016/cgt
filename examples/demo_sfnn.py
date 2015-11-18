@@ -4,6 +4,7 @@ import os
 import cgt
 import time
 import warnings
+import traceback
 import pprint
 import matplotlib.pyplot as plt
 from cgt.core import get_surrogate_func
@@ -19,7 +20,8 @@ from demo_char_rnn import Table, make_rmsprop_state
 
 def err_handler(type, flag):
     print type, flag
-    # raise FloatingPointError('refer to err_handler for more details')
+    traceback.print_stack()
+    raise FloatingPointError('refer to err_handler for more details')
 np.seterr(divide='call', over='call', invalid='call')
 np.seterrcall(err_handler)
 np.set_printoptions(precision=4, suppress=True)
@@ -122,8 +124,8 @@ def make_funcs(net_in, net_out, config, dbg_out=None):
     else:  # net outputs variance
         cutoff = size_out // 2
         out_mean, out_var = net_out[:, :cutoff], net_out[:, cutoff:]
-        # out_var = net_out_var ** 2 + 1.e-6
-        out_var = cgt.exp(out_var) + 1.e-6
+        out_var = out_var ** 2 + 1.e-6
+        # out_var = cgt.exp(out_var) + 1.e-6
     net_out = [out_mean, out_var]
     loss_raw = gaussian_diagonal.logprob(Y, out_mean, out_var)
     if 'param_penal_wt' in config:
@@ -173,6 +175,8 @@ def train(args, X, Y, dbg_iter=None, dbg_done=None):
         optim_state.theta = nn.init_array(
             args.init_conf, (param_col.get_total_size(), 1)).flatten()
     param_col.set_value_flat(optim_state.theta)
+    print "Initialization"
+    pprint.pprint(param_col.get_values())
     num_epochs, num_iters = 0, 0
     while num_epochs < args['n_epochs']:
         ind = np.random.choice(X.shape[0], args['size_batch'])
@@ -284,6 +288,7 @@ if __name__ == "__main__":
         decay_rate=.95,
         size_sample=30,  # #times to sample the network per data pair
         size_batch=1,  # #data pairs for each gradient estimate
+        # init_conf=nn.IIDGaussian(std=.1),
         init_conf=nn.XavierNormal(scale=1.),
         # param_penal_wt=1.e-4,
         # snapshot=os.path.join(DUMP_ROOT, '_1447739075/__snapshot.pkl'),
