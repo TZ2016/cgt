@@ -55,7 +55,7 @@ class _DiagonalGaussian(Distribution):
         k = x.shape[1]
         log_det = cgt.sum(cgt.log(sigma), axis=1, keepdims=True)
         prob_z = -.5 * (k * np.log(2. * np.pi) + log_det)
-        prob_e = cgt.sum(-.5 * sigma * ((x - mu) ** 2), axis=1, keepdims=True)
+        prob_e = cgt.sum(-.5 * ((x - mu) ** 2) / sigma, axis=1, keepdims=True)
         # output shape: (size_batch, 1)
         return prob_z + prob_e
     def sample(self, mu, sigma, shape=None, numeric=False):
