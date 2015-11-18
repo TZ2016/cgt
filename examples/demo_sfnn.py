@@ -101,9 +101,6 @@ def hybrid_network(size_in, size_out, num_units, num_stos, dbg_out=[]):
 
 
 def make_funcs(net_in, net_out, config, dbg_out=None):
-    def f_grad (*x):
-        out = f_surr(*x)
-        return out['loss'], out['surr_loss'], out['grad']
     def f_sample(_inputs, num_samples=1, flatten=False):
         _mean, _var = f_step(_inputs)
         _samples = []
@@ -120,16 +117,15 @@ def make_funcs(net_in, net_out, config, dbg_out=None):
         params = [p for p in params if not p.name.endswith(".b")]
     if 'const_var' in config:
         print "Constant variance"
-        out_var = config['const_var']
-        loss_raw = -.5 * cgt.sum((net_out - Y) ** 2, axis=1, keepdims=True) / out_var
+        out_mean = net_out
         out_var = cgt.fill(config['const_var'], [size_batch, size_out])
-        net_out = [net_out, out_var]
     else:  # net outputs variance
         cutoff = size_out // 2
-        net_out_mean, net_out_var = net_out[:, :cutoff], net_out[:, cutoff:]
-        net_out_var = net_out_var ** 2 + 1.e-6
-        loss_raw = gaussian_diagonal.logprob(Y, net_out_mean, net_out_var)
-        net_out = [net_out_mean, net_out_var]
+        out_mean, out_var = net_out[:, :cutoff], net_out[:, cutoff:]
+        # out_var = net_out_var ** 2 + 1.e-6
+        out_var = cgt.exp(out_var) + 1.e-6
+    net_out = [out_mean, out_var]
+    loss_raw = gaussian_diagonal.logprob(Y, out_mean, out_var)
     if 'param_penal_wt' in config:
         print "Applying penalty on parameter norm"
         assert config['param_penal_wt'] > 0
@@ -142,7 +138,7 @@ def make_funcs(net_in, net_out, config, dbg_out=None):
     f_surr = get_surrogate_func([net_in, Y],
                                 net_out + dbg_out,
                                 [loss_raw], params)
-    return params, f_step, f_sample, None, f_surr
+    return params, f_step, None, None, f_surr
 
 
 def rmsprop_update(grad, state):
@@ -191,7 +187,7 @@ def train(args, X, Y, dbg_iter=None, dbg_done=None):
             num_iters = 0
         if dbg_iter:
             dbg_iter(num_epochs, num_iters, info, param_col, optim_state,
-                     f_step, f_sample, f_surr)
+                     f_step, f_surr)
     if dbg_done: dbg_done(param_col, optim_state)
     return optim_state
 
@@ -213,7 +209,7 @@ def example_debug(args, X, Y, out_path='.'):
     it_theta_comp = []
     it_grad_norm, it_grad_norm_comp = [], []
     it_theta_norm, it_theta_norm_comp = [], []
-    def dbg_iter(num_epochs, num_iters, info, param_col, optim_state, f_step, f_sample, f_surr):
+    def dbg_iter(num_epochs, num_iters, info, param_col, optim_state, f_step, f_surr):
         it_loss_surr.append(info['objective'])
         it_grad_norm.append(np.linalg.norm(optim_state.scratch))
         it_grad_norm_comp.append([np.linalg.norm(g) for g in info['grad']])
@@ -224,8 +220,8 @@ def example_debug(args, X, Y, out_path='.'):
         if num_iters == 0:  # new epoch
             print "Epoch %d" % num_epochs
             print "network parameters"
-            _params_val = param_col.get_values()
-            pprint.pprint(_params_val)
+            pprint.pprint(param_col.get_values())
+            print "Gradient norm = %f" % it_grad_norm[-1]
             s_X = np.random.choice(X.flatten(), size=(args['dbg_batch'], 1), replace=False)
             s_Y_mean, s_Y_var = f_step(s_X)
             ep_samples.append((num_epochs, s_X.flatten(), s_Y_mean.flatten()))
@@ -277,11 +273,11 @@ if __name__ == "__main__":
     example_args = Table(
         # network architecture
         num_inputs=1,
-        num_outputs=1,
+        num_outputs=2,
         num_units=[2, 4, 4],
         num_sto=[0, 2, 2],
         no_bias=False,
-        const_var=.05,
+        # const_var=.05,
         # training parameters
         n_epochs=20,
         step_size=.05,
