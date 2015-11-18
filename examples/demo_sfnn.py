@@ -105,9 +105,7 @@ def make_funcs(net_in, net_out, config, dbg_out=None):
         out = f_surr(*x)
         return out['loss'], out['surr_loss'], out['grad']
     def f_sample(_inputs, num_samples=1, flatten=False):
-        _outputs = f_step(_inputs)[0]
-        _size_y = _outputs.shape[1] // 2
-        _mean, _var = _outputs[:, :_size_y], _outputs[:, _size_y:]
+        _mean, _var = f_step(_inputs)
         _samples = []
         for _m, _v in zip(_mean, _var):
             _s = np.random.multivariate_normal(_m, np.diag(np.sqrt(_v)), num_samples)
@@ -125,13 +123,13 @@ def make_funcs(net_in, net_out, config, dbg_out=None):
         out_var = config['const_var']
         loss_raw = -.5 * cgt.sum((net_out - Y) ** 2, axis=1, keepdims=True) / out_var
         out_var = cgt.fill(config['const_var'], [size_batch, size_out])
-        net_out = cgt.concatenate([net_out, out_var], axis=1)
+        net_out = [net_out, out_var]
     else:  # net outputs variance
         cutoff = size_out // 2
         net_out_mean, net_out_var = net_out[:, :cutoff], net_out[:, cutoff:]
         net_out_var = net_out_var ** 2 + 1.e-6
         loss_raw = gaussian_diagonal.logprob(Y, net_out_mean, net_out_var)
-        net_out = cgt.concatenate([net_out_mean, net_out_var], axis=1)
+        net_out = [net_out_mean, net_out_var]
     if 'param_penal_wt' in config:
         print "Applying penalty on parameter norm"
         assert config['param_penal_wt'] > 0
@@ -140,9 +138,9 @@ def make_funcs(net_in, net_out, config, dbg_out=None):
         loss_param *= config['param_penal_wt']
         loss_raw += loss_param
     # end of loss definition
-    f_step = cgt.function([net_in], [net_out])
+    f_step = cgt.function([net_in], net_out)
     f_surr = get_surrogate_func([net_in, Y],
-                                [net_out] + dbg_out,
+                                net_out + dbg_out,
                                 [loss_raw], params)
     return params, f_step, f_sample, None, f_surr
 
@@ -207,10 +205,10 @@ def example_debug(args, X, Y, out_path='.'):
             os.makedirs(d)
         return abs_path
     N, _ = X.shape
-    size_batch, size_samples, max_plots = args['dbg_batch'], args['dbg_samples'], 5
     conv_smoother = lambda x: np.convolve(x, [1. / N] * N, mode='valid')
     # cache
     ep_samples = []
+    ep_net_distr = []
     it_loss_surr = []
     it_theta_comp = []
     it_grad_norm, it_grad_norm_comp = [], []
@@ -228,10 +226,12 @@ def example_debug(args, X, Y, out_path='.'):
             print "network parameters"
             _params_val = param_col.get_values()
             pprint.pprint(_params_val)
-            s_X = np.random.choice(X.flatten(), size=(size_batch, 1), replace=False)
-            s_X = np.repeat(s_X, size_samples, axis=0)
-            s_Y = f_sample(s_X, num_samples=1, flatten=True)
-            ep_samples.append((num_epochs, s_X.flatten(), s_Y.flatten()))
+            s_X = np.random.choice(X.flatten(), size=(args['dbg_batch'], 1), replace=False)
+            s_Y_mean, s_Y_var = f_step(s_X)
+            ep_samples.append((num_epochs, s_X.flatten(), s_Y_mean.flatten()))
+            err_plt = lambda: plt.errorbar(s_X.flatten(), s_Y_mean.flatten(),
+                                           yerr=np.sqrt(s_Y_var).flatten(), fmt='none')
+            ep_net_distr.append((num_epochs, err_plt))
     def dbg_done(param_col, optim_state):
         # save params
         theta = param_col.get_values()
@@ -260,11 +260,11 @@ def example_debug(args, X, Y, out_path='.'):
             plt.subplot(_num, 1, _i+1); plt.plot(conv_smoother(_theta_norm_cmp[_i]))
         plt.savefig(safe_path('norm_theta_cmp.png')); plt.close()
         # plot samples for each epoch
-        for _e, _sample in enumerate(ep_samples):
+        for _e, _distr in enumerate(ep_net_distr):
             _ttl = 'epoch_%d.png' % _e
             plt.scatter(X, Y, alpha=0.5, color='y', marker='*')
             plt.gca().set_autoscale_on(False)
-            plt.scatter(*_sample[1:]); plt.title(_ttl)
+            _distr[1](); plt.title(_ttl)
             plt.savefig(safe_path('_sample/' + _ttl)); plt.cla()
     return {'dbg_iter': dbg_iter, 'dbg_done': dbg_done}
 
@@ -278,12 +278,12 @@ if __name__ == "__main__":
         # network architecture
         num_inputs=1,
         num_outputs=1,
-        num_units=[2, 4, 2],
-        num_sto=[1, 1, 0],
+        num_units=[2, 4, 4],
+        num_sto=[0, 2, 2],
         no_bias=False,
-        const_var=.1,
+        const_var=.05,
         # training parameters
-        n_epochs=2,
+        n_epochs=20,
         step_size=.05,
         decay_rate=.95,
         size_sample=30,  # #times to sample the network per data pair
@@ -293,7 +293,6 @@ if __name__ == "__main__":
         # snapshot=os.path.join(DUMP_ROOT, '_1447739075/__snapshot.pkl'),
         # debugging
         dbg_batch=100,
-        dbg_samples=10,
     )
     X, Y = data_synthetic_a(1000)
     X, Y = scale_data((X, Y))
