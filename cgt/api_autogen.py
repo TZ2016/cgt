@@ -112,3 +112,11 @@ def bernoulli(p):
 def norm_diag(mu, sigma):
     "Sample from distribution DiagNorm(mu,sigma)"
     return core.distr("DiagonalGaussian", mu, sigma)
+
+def safe_div(x, y):
+    "Safe operation"
+    return core.Result(core.SafeOp("safe_div", x, y), [x, y])
+
+def safe_mul(x, y):
+    "Safe operation"
+    return core.Result(core.SafeOp("safe_mul", x, y), [x, y])

@@ -1,5 +1,5 @@
 import sys
-from cgt.core import UNARY_INFO, BINARY_INFO, DISTR_INFO
+from cgt.core import UNARY_INFO, BINARY_INFO, DISTR_INFO, SAFEOP_INFO
 import cgt, os, os.path as osp
 fh = sys.stdout
 
@@ -32,5 +32,13 @@ def {npname}({params}):
     "Sample from distribution {repr}"
     return core.distr("{infixname}", {params})
 """.format(params=", ".join(info.params), repr=info.repr, npname=info.short, infixname=infixname))
+
+    for (infixname, info) in sorted(SAFEOP_INFO.iteritems(), key=lambda x: x[0]):
+        fh.write(
+"""
+def {infixname}({params}):
+    "Safe operation"
+    return core.Result(core.SafeOp("{infixname}", {params}), [{params}])
+""".format(params=", ".join(info.params), infixname=infixname))
 
 

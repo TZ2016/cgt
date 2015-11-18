@@ -893,6 +893,7 @@ def get_surrogate_func(_inputs, _outputs, _costs, _wrt):
     # importance weights: P(y|h, x) scaled. by P(y|x) = \sum P(y|h,x)
     _wt_vec = cgt.exp(_args_cost.values()[0])  # TODO_TZ [0] is just a makeshift
     _wt_vec /= cgt.sum(_wt_vec)  # TODO_TZ this is risky
+    # _wt_vec = cgt.safe_div(_wt_vec, cgt.sum(_wt_vec))
     # true objective, or expected complete log-lik: log P(y|x)
     # before weighting: log P(h|x) + log P(y|h,x) = log P(y,h|x)
     _obj_vec = _wt_vec * _obj_unwt_vec
@@ -1644,6 +1645,53 @@ def distr(name, *params):
     op = DistrOp(name)
     assert len(params) == len(op.info.params)
     return Result(op, params)
+
+# Safe Ops
+# ----------------------------------------------------------------
+SafeOpInfo = namedtuple("SafeOpInfo", ("constructor", "opname", "params"))
+
+SAFEOP_INFO = {
+    "safe_mul": SafeOpInfo(ElwiseBinary, '*', ('x', 'y')),
+    "safe_div": SafeOpInfo(ElwiseBinary, '/', ('x', 'y')),
+}
+
+class SafeOp(Op):
+    available_impls = ("python",)
+    def __init__(self, opname, x, y):
+        assert opname in SAFEOP_INFO
+        self.info = SAFEOP_INFO[opname]
+        self.opname = opname
+        (x, y) = map(as_node, (x, y))
+        self.scalar_mask = ((x.ndim == 0), (y.ndim == 0))
+        self.op = self.info.constructor(self.info.opname, self.scalar_mask)
+    def get_diff(self, num_inputs):
+        return self.op.get_diff(num_inputs)
+    def get_hash(self):
+        return self.op.get_hash()
+    def get_expr(self, parent_exprs):
+        return self.op.get_expr(parent_exprs)
+    def __str__(self):
+        return self.opname
+    def get_replacement(self, _newparents, _analysis):
+        return self.op.get_replacement(_newparents, _analysis)
+    def pullback(self, *args):
+        raise NotImplementedError
+    def shp_apply(self, inputs):
+        return self.op.shp_apply(inputs)
+    def typ_apply(self, input_types):
+        return self.op.typ_apply(input_types)
+    def get_py_func(self, input_types):
+        def _safe_mul(reads, write):
+            x, y = reads
+            if np.allclose(x, 0.) or np.allclose(y, 0.):
+                write[...] = 0.
+            else:
+                # TODO_TZ what about partially zeros
+                self.op.get_py_func(input_types)(reads, write)
+        return _safe_mul
+    def get_native_compile_info(self, input_types, devtype):
+        raise NotImplementedError
+
 
 # Shape manip
 # ----------------------------------------------------------------
