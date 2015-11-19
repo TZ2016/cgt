@@ -1675,20 +1675,29 @@ class SafeOp(Op):
     def get_replacement(self, _newparents, _analysis):
         return self.op.get_replacement(_newparents, _analysis)
     def pullback(self, *args):
-        raise NotImplementedError
+        return self.op.pullback(*args)
     def shp_apply(self, inputs):
         return self.op.shp_apply(inputs)
     def typ_apply(self, input_types):
         return self.op.typ_apply(input_types)
     def get_py_func(self, input_types):
-        def _safe_mul(reads, write):
+        def safe_op(reads, write):
+            # TODO_TZ This line of logic only applies to mul
             x, y = reads
-            if np.allclose(x, 0.) or np.allclose(y, 0.):
-                write[...] = 0.
+            mask = np.logical_not(np.isclose(x, 0.) | np.isclose(y, 0.))
+            if np.any(mask):
+                if all(self.scalar_mask):
+                    self.op.get_py_func(input_types)([x, y], write)
+                else:
+                    if not self.scalar_mask[0]: x = x[mask]
+                    if not self.scalar_mask[1]: y = y[mask]
+                    write_t = np.zeros(np.sum(mask))
+                    self.op.get_py_func(input_types)([x, y], write_t)
+                    write[np.logical_not(mask)] = 0.
+                    write[mask] = write_t
             else:
-                # TODO_TZ what about partially zeros
-                self.op.get_py_func(input_types)(reads, write)
-        return _safe_mul
+                write[...] = 0.
+        return safe_op
     def get_native_compile_info(self, input_types, devtype):
         raise NotImplementedError
 
