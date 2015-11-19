@@ -875,11 +875,6 @@ def get_surrogate_func(_inputs, _outputs, _costs, _wrt):
             if m == 1: warnings.warn('Sampling network only once')
             obj, obj_vec, wt_vec, obj_unwt_vec, grad_obj = \
                 f_surr_parser(f_surr(*(list(inputs) + s_rand + s_loss)))
-            # if np.sum(wt_vec) <= 0.:
-            #     print 'wtf!!!'
-            # else:
-            #     print "+"
-            #     grad_obj = [g / np.sum(wt_vec) for g in grad_obj]
             res['objective'] = obj  # scalar
             res['objective_vec'] = obj_vec  # (num_samples, 1)
             res['weights'] = wt_vec  # (num_samples, 1)
@@ -892,7 +887,6 @@ def get_surrogate_func(_inputs, _outputs, _costs, _wrt):
     _obj_unwt_vec, _args_cost, _args_rand = _get_surr_costs(_costs)
     # importance weights: P(y|h, x) scaled. by P(y|x) = \sum P(y|h,x)
     _wt_vec = cgt.exp(_args_cost.values()[0])  # TODO_TZ [0] is just a makeshift
-    # _wt_vec /= cgt.sum(_wt_vec)  # TODO_TZ this is risky
     _wt_vec = cgt.safe_div(_wt_vec, cgt.sum(_wt_vec))
     # true objective, or expected complete log-lik: log P(y|x)
     # before weighting: log P(h|x) + log P(y|h,x) = log P(y,h|x)
@@ -1682,17 +1676,17 @@ class SafeOp(Op):
         return self.op.typ_apply(input_types)
     def get_py_func(self, input_types):
         def safe_op(reads, write):
-            # TODO_TZ This line of logic only applies to mul
+            # skip the op element-wise for those x = 0, so that 0 * inf = 0
             x, y = reads
-            mask = np.logical_not(np.isclose(x, 0.) | np.isclose(y, 0.))
+            mask = np.logical_not(np.isclose(x, 0.))
             if np.any(mask):
-                if all(self.scalar_mask):
+                # if self.scalar_mask[0] True, then must be non-zero
+                if self.scalar_mask[0]:
                     self.op.get_py_func(input_types)([x, y], write)
                 else:
-                    if not self.scalar_mask[0]: x = x[mask]
                     if not self.scalar_mask[1]: y = y[mask]
                     write_t = np.zeros(np.sum(mask))
-                    self.op.get_py_func(input_types)([x, y], write_t)
+                    self.op.get_py_func(input_types)([x[mask], y], write_t)
                     write[np.logical_not(mask)] = 0.
                     write[mask] = write_t
             else:
