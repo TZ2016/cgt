@@ -792,7 +792,7 @@ def _get_surr_costs(costs):
             # new_cost = cgt.broadcast('*', logprob, future_cost, 'xx,x1')
             # TODO_TZ Warning: this is no longer graph conversion
             # assume cost is P(y|h, x)
-            new_cost = logprob
+            new_cost = logprob  # TODO_TZ (w - 1/M) logprob as var reduction
             rand_vals[node] = rand_val
             new_costs.append(new_cost)
     # sever backward path involving stochastic nodes
