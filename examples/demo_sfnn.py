@@ -15,7 +15,37 @@ from sklearn.preprocessing import StandardScaler
 from scipy.special import expit as sigmoid
 from param_collection import ParamCollection
 from cgt.distributions import gaussian_diagonal
-from demo_char_rnn import Table, make_rmsprop_state
+from demo_char_rnn import make_rmsprop_state
+
+
+DUMP_ROOT = os.path.join(os.environ['HOME'], 'workspace/cgt/tmp/')
+DEFAULT_ARGS = {
+    # network architecture
+    "num_inputs": 2,
+    "num_outputs": 1,
+    "num_units": [2, 4, 4],
+    "num_sto": [0, 2, 2],
+    "no_bias": False,
+    "const_var": .05,
+
+    # training parameters
+    "n_epochs": 20,
+    "step_size": .05,
+    "decay_rate": .95,
+
+    # training logistics
+    "size_sample": 30,  # #times to sample the network per data pair
+    "size_batch": 1,  # #data pairs for each gradient estimate
+    # "init_conf": nn.IIDGaussian(std=.1),
+    "init_conf": nn.XavierNormal(scale=1.),
+    # "param_penal_wt": 1.e-4,
+    # "snapshot": os.path.join(DUMP_ROOT, '_1447739075/__snapshot.pkl'),
+
+    # debugging
+    "dbg_batch": 100,
+    "dbg_plot_samples": True,
+    "dump_path": os.path.join(DUMP_ROOT,'_%d/' % int(time.time())),
+}
 
 
 def err_handler(type, flag):
@@ -159,8 +189,8 @@ def rmsprop_update(grad, state):
 
 def train(args, X, Y, dbg_iter=None, dbg_done=None):
     dbg_out = []
-    net_in, net_out = hybrid_network(args.num_inputs, args.num_outputs,
-                                     args.num_units, args.num_sto,
+    net_in, net_out = hybrid_network(args['num_inputs'], args['num_outputs'],
+                                     args['num_units'], args['num_sto'],
                                      dbg_out=dbg_out)
     params, f_step, f_sample, _, f_surr = \
         make_funcs(net_in, net_out, args, dbg_out=dbg_out)
@@ -170,10 +200,10 @@ def train(args, X, Y, dbg_iter=None, dbg_done=None):
         optim_state = pickle.load(open(args['snapshot'], 'r'))
     else:
         optim_state = make_rmsprop_state(theta=param_col.get_value_flat(),
-                                         step_size=args.step_size,
-                                         decay_rate=args.decay_rate)
+                                         step_size=args['step_size'],
+                                         decay_rate=args['decay_rate'])
         optim_state.theta = nn.init_array(
-            args.init_conf, (param_col.get_total_size(), 1)).flatten()
+            args['init_conf'], (param_col.get_total_size(), 1)).flatten()
     param_col.set_value_flat(optim_state.theta)
     print "Initialization"
     pprint.pprint(param_col.get_values())
@@ -196,7 +226,7 @@ def train(args, X, Y, dbg_iter=None, dbg_done=None):
     return optim_state
 
 
-def example_debug(args, X, Y, out_path='.'):
+def example_debug(args, X, Y):
     def safe_path(rel_path):
         abs_path = os.path.join(out_path, rel_path)
         d = os.path.dirname(abs_path)
@@ -205,9 +235,9 @@ def example_debug(args, X, Y, out_path='.'):
             os.makedirs(d)
         return abs_path
     N, _ = X.shape
+    out_path = args['dump_path']
     conv_smoother = lambda x: np.convolve(x, [1. / N] * N, mode='valid')
     # cache
-    ep_samples = []
     ep_net_distr = []
     it_loss_surr = []
     it_theta_comp = []
@@ -226,18 +256,18 @@ def example_debug(args, X, Y, out_path='.'):
             print "network parameters"
             pprint.pprint(param_col.get_values())
             print "Gradient norm = %f" % it_grad_norm[-1]
-            s_X = np.random.choice(X.flatten(), size=(args['dbg_batch'], 1), replace=False)
-            s_Y_mean, s_Y_var = f_step(s_X)
-            ep_samples.append((num_epochs, s_X.flatten(), s_Y_mean.flatten()))
-            err_plt = lambda: plt.errorbar(s_X.flatten(), s_Y_mean.flatten(),
-                                           yerr=np.sqrt(s_Y_var).flatten(), fmt='none')
-            ep_net_distr.append((num_epochs, err_plt))
+            if args['dbg_plot_samples']:
+                s_X = np.random.choice(X.flatten(), size=(args['dbg_batch'], 1), replace=False)
+                s_Y_mean, s_Y_var = f_step(s_X)
+                err_plt = lambda: plt.errorbar(s_X.flatten(), s_Y_mean.flatten(),
+                                               yerr=np.sqrt(s_Y_var).flatten(), fmt='none')
+                ep_net_distr.append((num_epochs, err_plt))
     def dbg_done(param_col, optim_state):
         # save params
-        theta = param_col.get_values()
         pickle.dump(args, open(safe_path('args.pkl'), 'w'))
-        pickle.dump(theta, open(safe_path('params.pkl'), 'w'))
+        pickle.dump(param_col.get_values(), open(safe_path('params.pkl'), 'w'))
         pickle.dump(optim_state, open(safe_path('__snapshot.pkl'), 'w'))
+        pickle.dump(np.array(it_theta_comp), open(safe_path('params_history.pkl'), 'w'))
         plt.close('all')
         # plot overview
         plt.figure(); plt.suptitle('overview')
@@ -260,45 +290,20 @@ def example_debug(args, X, Y, out_path='.'):
             plt.subplot(_num, 1, _i+1); plt.plot(conv_smoother(_theta_norm_cmp[_i]))
         plt.savefig(safe_path('norm_theta_cmp.png')); plt.close()
         # plot samples for each epoch
-        for _e, _distr in enumerate(ep_net_distr):
-            _ttl = 'epoch_%d.png' % _e
-            plt.scatter(X, Y, alpha=0.5, color='y', marker='*')
-            plt.gca().set_autoscale_on(False)
-            _distr[1](); plt.title(_ttl)
-            plt.savefig(safe_path('_sample/' + _ttl)); plt.cla()
+        if args['dbg_plot_samples']:
+            for _e, _distr in enumerate(ep_net_distr):
+                _ttl = 'epoch_%d.png' % _e
+                plt.scatter(X, Y, alpha=0.5, color='y', marker='*')
+                plt.gca().set_autoscale_on(False)
+                _distr[1](); plt.title(_ttl)
+                plt.savefig(safe_path('_sample/' + _ttl)); plt.cla()
     return {'dbg_iter': dbg_iter, 'dbg_done': dbg_done}
 
 if __name__ == "__main__":
-    DUMP_ROOT = os.path.join(os.environ['HOME'], 'workspace/cgt/tmp/')
-    DUMP_PATH = os.path.join(DUMP_ROOT,'_%d/' % int(time.time()))
-    #################3#####
-    #  for synthetic data #
-    #######################
-    example_args = Table(
-        # network architecture
-        num_inputs=1,
-        num_outputs=1,
-        num_units=[2, 4, 4],
-        num_sto=[0, 2, 2],
-        no_bias=False,
-        const_var=.05,
-        # training parameters
-        n_epochs=20,
-        step_size=.05,
-        decay_rate=.95,
-        size_sample=30,  # #times to sample the network per data pair
-        size_batch=1,  # #data pairs for each gradient estimate
-        # init_conf=nn.IIDGaussian(std=.1),
-        init_conf=nn.XavierNormal(scale=1.),
-        # param_penal_wt=1.e-4,
-        # snapshot=os.path.join(DUMP_ROOT, '_1447739075/__snapshot.pkl'),
-        # debugging
-        dbg_batch=100,
-    )
     X, Y = data_synthetic_a(1000)
     X, Y = scale_data((X, Y))
-    state = train(example_args, X, Y,
-                  **example_debug(example_args, X, Y, DUMP_PATH))
+    state = train(DEFAULT_ARGS, X, Y,
+                  **example_debug(DEFAULT_ARGS, X, Y))
 
     # X, Y = generate_examples(10, np.array([3.]), np.array([0.]), [.1])
     # X1, Y1 = generate_examples(10,
