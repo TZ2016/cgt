@@ -42,7 +42,10 @@ DEFAULT_ARGS = {
     # "snapshot": os.path.join(DUMP_ROOT, '_1447739075/__snapshot.pkl'),
 
     # debugging
+    "debug": True,
     "dbg_batch": 100,
+    "dbg_plot_x_dim": 0,
+    "dbg_plot_y_dim": 0,
     "dbg_plot_samples": True,
     "dump_path": os.path.join(DUMP_ROOT,'_%d/' % int(time.time())),
 }
@@ -80,6 +83,9 @@ def data_synthetic_a(N):
     Y = np.random.uniform(0., 1., N)
     X = Y + 0.3 * np.sin(2. * Y * np.pi) + np.random.uniform(-.1, .1, N)
     Y, X = Y.reshape((N, 1)), X.reshape((N, 1))
+    Z = np.zeros_like(X)
+    X = np.hstack([X, Z])
+    # Y = np.hstack([Y, Y])
     return X, Y
 
 def data_sigm_multi(N, p):
@@ -188,6 +194,8 @@ def rmsprop_update(grad, state):
 
 
 def train(args, X, Y, dbg_iter=None, dbg_done=None):
+    if args['debug'] and (dbg_iter is None or dbg_done is None):
+        dbg_iter, dbg_done = example_debug(args, X, Y)
     dbg_out = []
     net_in, net_out = hybrid_network(args['num_inputs'], args['num_outputs'],
                                      args['num_units'], args['num_sto'],
@@ -210,7 +218,7 @@ def train(args, X, Y, dbg_iter=None, dbg_done=None):
     num_epochs, num_iters = 0, 0
     while num_epochs < args['n_epochs']:
         ind = np.random.choice(X.shape[0], args['size_batch'])
-        x, y = X[ind], Y[ind]  # not sure this works for multi-dim
+        x, y = X[ind], Y[ind]
         info = f_surr(x, y, num_samples=args['size_sample'])
         grad = info['grad']
         rmsprop_update(param_col.flatten_values(grad), optim_state)
@@ -237,6 +245,7 @@ def example_debug(args, X, Y):
     N, _ = X.shape
     out_path = args['dump_path']
     conv_smoother = lambda x: np.convolve(x, [1. / N] * N, mode='valid')
+    _ix, _iy = args['dbg_plot_x_dim'], args['dbg_plot_y_dim']
     # cache
     ep_net_distr = []
     it_loss_surr = []
@@ -257,10 +266,10 @@ def example_debug(args, X, Y):
             pprint.pprint(param_col.get_values())
             print "Gradient norm = %f" % it_grad_norm[-1]
             if args['dbg_plot_samples']:
-                s_X = np.random.choice(X.flatten(), size=(args['dbg_batch'], 1), replace=False)
+                s_X = X[np.random.choice(N, size=args['dbg_batch'], replace=False), :]
                 s_Y_mean, s_Y_var = f_step(s_X)
-                err_plt = lambda: plt.errorbar(s_X.flatten(), s_Y_mean.flatten(),
-                                               yerr=np.sqrt(s_Y_var).flatten(), fmt='none')
+                err_plt = lambda: plt.errorbar(s_X[:, _ix], s_Y_mean[:, _iy],
+                                               yerr=np.sqrt(s_Y_var[:, _iy]), fmt='none')
                 ep_net_distr.append((num_epochs, err_plt))
     def dbg_done(param_col, optim_state):
         # save params
@@ -278,14 +287,14 @@ def example_debug(args, X, Y):
         # plot grad norm component-wise
         _grad_norm_cmp = np.array(it_grad_norm_comp).T
         plt.figure(); plt.suptitle('grad norm layer-wise')
-        _num = len(it_grad_norm_comp[0])
+        _num = _grad_norm_cmp.shape[0]
         for _i in range(_num):
             plt.subplot(_num, 1, _i+1); plt.plot(conv_smoother(_grad_norm_cmp[_i]))
         plt.savefig(safe_path('norm_grad_cmp.png')); plt.close()
         # plot theta norm component-wise
         _theta_norm_cmp = np.array(it_theta_norm_comp).T
         plt.figure(); plt.suptitle('theta norm layer-wise')
-        _num = len(it_theta_norm_comp[0])
+        _num = _theta_norm_cmp.shape[0]
         for _i in range(_num):
             plt.subplot(_num, 1, _i+1); plt.plot(conv_smoother(_theta_norm_cmp[_i]))
         plt.savefig(safe_path('norm_theta_cmp.png')); plt.close()
@@ -293,17 +302,16 @@ def example_debug(args, X, Y):
         if args['dbg_plot_samples']:
             for _e, _distr in enumerate(ep_net_distr):
                 _ttl = 'epoch_%d.png' % _e
-                plt.scatter(X, Y, alpha=0.5, color='y', marker='*')
+                plt.scatter(X[:, _ix], Y[:, _iy], alpha=0.5, color='y', marker='*')
                 plt.gca().set_autoscale_on(False)
                 _distr[1](); plt.title(_ttl)
                 plt.savefig(safe_path('_sample/' + _ttl)); plt.cla()
-    return {'dbg_iter': dbg_iter, 'dbg_done': dbg_done}
+    return dbg_iter, dbg_done
 
 if __name__ == "__main__":
     X, Y = data_synthetic_a(1000)
     X, Y = scale_data((X, Y))
-    state = train(DEFAULT_ARGS, X, Y,
-                  **example_debug(DEFAULT_ARGS, X, Y))
+    state = train(DEFAULT_ARGS, X, Y)
 
     # X, Y = generate_examples(10, np.array([3.]), np.array([0.]), [.1])
     # X1, Y1 = generate_examples(10,

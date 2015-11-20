@@ -769,7 +769,7 @@ def _get_surr_costs(costs):
     back-propagating error information.
     """
     if isinstance(costs, Node): costs = [costs]
-    assert all([c.ndim == 2 for c in costs]), "cost of shape (size_batch,1)"
+    assert all([c.ndim == 2 for c in costs]), "cost of shape (size_batch, 1)"
     costs = _decompose_costs(costs)
     mappings = {}  # map from original node to cloned ones
     costs = clone(costs, mappings=mappings)
@@ -864,7 +864,7 @@ def get_surrogate_func(_inputs, _outputs, _costs, _wrt):
         assert m > 0, 'positive number of samples'
         if m > 1 and not _args_rand:
             warnings.warn('Sample multiple times on a deterministic graph')
-        inputs = [np.repeat(i, m, axis=0) for i in inputs]  # not sure this works for multi-dim
+        inputs = [np.repeat(i, m, axis=0) for i in inputs]
         net_out, s_rand, s_loss = f_sample_parser(f_sample(*inputs))
         res['inputs'] = inputs  # exact inputs passed into the net
         res['outputs'] = net_out  # real-valued returns of "_outputs"
@@ -887,7 +887,7 @@ def get_surrogate_func(_inputs, _outputs, _costs, _wrt):
     _obj_unwt_vec, _args_cost, _args_rand = _get_surr_costs(_costs)
     # importance weights: P(y|h, x) scaled. by P(y|x) = \sum P(y|h,x)
     _wt_vec = _args_cost.values()[0]  # TODO_TZ [0] is just a makeshift
-    _wt_vec -= cgt.mean(_wt_vec)  # min does not work, (cause inf)
+    # _wt_vec -= cgt.mean(_wt_vec)  # min and mean both causes inf a lot
     _wt_vec = cgt.exp(_wt_vec)
     _wt_vec = cgt.safe_div(_wt_vec, cgt.sum(_wt_vec))
     # true objective, or expected complete log-lik: log P(y|x)
