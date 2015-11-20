@@ -20,6 +20,10 @@ except ImportError:
 floatX = "f4"
 complexX = "c8"
 
+def check_source():
+    # just in case I import the wrong "cgt"
+    print "This cgt is TZ2016's fork!"
+
 # Get rid of names we don't want to export
 del np
 del cgt
