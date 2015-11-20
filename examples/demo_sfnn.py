@@ -13,19 +13,19 @@ import numpy as np
 import pickle
 from sklearn.preprocessing import StandardScaler
 from scipy.special import expit as sigmoid
-from param_collection import ParamCollection
+from cgt.utility.param_collection import ParamCollection
 from cgt.distributions import gaussian_diagonal
-from demo_char_rnn import make_rmsprop_state
 
 
 DUMP_ROOT = os.path.join(os.environ['HOME'], 'workspace/cgt/tmp/')
 DEFAULT_ARGS = {
     # network architecture
-    "num_inputs": 2,
-    "num_outputs": 1,
+    "num_inputs": 1,
+    "num_outputs": 2,
     "num_units": [2, 4, 4],
     "num_sto": [0, 2, 2],
     "no_bias": False,
+    "out_var": False,
     "const_var": .05,
 
     # training parameters
@@ -38,15 +38,16 @@ DEFAULT_ARGS = {
     "size_batch": 1,  # #data pairs for each gradient estimate
     # "init_conf": nn.IIDGaussian(std=.1),
     "init_conf": nn.XavierNormal(scale=1.),
-    # "param_penal_wt": 1.e-4,
+    "param_penal_wt": 0.,
     # "snapshot": os.path.join(DUMP_ROOT, '_1447739075/__snapshot.pkl'),
 
     # debugging
     "debug": True,
     "dbg_batch": 100,
     "dbg_plot_x_dim": 0,
-    "dbg_plot_y_dim": 0,
+    "dbg_plot_y_dim": 1,
     "dbg_plot_samples": True,
+    "dbg_out_full": True,
     "dump_path": os.path.join(DUMP_ROOT,'_%d/' % int(time.time())),
 }
 
@@ -59,6 +60,7 @@ np.seterr(divide='call', over='warn', invalid='call', under='warn')
 np.seterrcall(err_handler)
 np.set_printoptions(precision=4, suppress=True)
 print cgt.get_config(True)
+cgt.check_source()
 
 
 def scale_data(Xs, scalars=None):
@@ -83,9 +85,9 @@ def data_synthetic_a(N):
     Y = np.random.uniform(0., 1., N)
     X = Y + 0.3 * np.sin(2. * Y * np.pi) + np.random.uniform(-.1, .1, N)
     Y, X = Y.reshape((N, 1)), X.reshape((N, 1))
-    Z = np.zeros_like(X)
-    X = np.hstack([X, Z])
-    # Y = np.hstack([Y, Y])
+    Z = np.random.normal(scale=.05, size=(N, 1))
+    # X = np.hstack([X, Z])
+    Y = np.hstack([Y, Z])
     return X, Y
 
 def data_sigm_multi(N, p):
@@ -119,9 +121,9 @@ def hybrid_layer(X, size_in, size_out, size_random, dbg_out=[]):
 
 def hybrid_network(size_in, size_out, num_units, num_stos, dbg_out=[]):
     assert len(num_units) == len(num_stos)
-    X = cgt.matrix("X", fixed_shape=(None, size_in))
-    prev_num_units, prev_out = size_in, X
-    dbg_out.append(X)
+    net_in = cgt.matrix("X", fixed_shape=(None, size_in))
+    prev_num_units, prev_out = size_in, net_in
+    dbg_out.append(net_in)
     for (curr_num_units, curr_num_sto) in zip(num_units, num_stos):
         _layer_dbg_out = []
         prev_out = hybrid_layer(
@@ -135,7 +137,7 @@ def hybrid_network(size_in, size_out, num_units, num_stos, dbg_out=[]):
                         name="InnerProd(%d->%d)" % (prev_num_units, size_out)
                         )(prev_out)
     dbg_out.append(net_out)
-    return X, net_out
+    return net_in, net_out
 
 
 def make_funcs(net_in, net_out, config, dbg_out=None):
@@ -150,21 +152,21 @@ def make_funcs(net_in, net_out, config, dbg_out=None):
     Y = cgt.matrix("Y")
     params = nn.get_parameters(net_out)
     size_batch, size_out = net_out.shape
-    if 'no_bias' in config and config['no_bias']:
+    if config['no_bias']:
         print "Excluding bias"
         params = [p for p in params if not p.name.endswith(".b")]
-    if 'const_var' in config:
-        print "Constant variance"
-        out_mean = net_out
-        out_var = cgt.fill(config['const_var'], [size_batch, size_out])
-    else:  # net outputs variance
+    if config['out_var']:  # net outputs variance
         cutoff = size_out // 2
         out_mean, out_var = net_out[:, :cutoff], net_out[:, cutoff:]
         # out_var = out_var ** 2 + 1.e-6
         out_var = cgt.exp(out_var) + 1.e-6
+    else:
+        print "Constant variance"
+        out_mean = net_out
+        out_var = cgt.fill(config['const_var'], [size_batch, size_out])
     net_out = [out_mean, out_var]
     loss_raw = gaussian_diagonal.logprob(Y, out_mean, out_var)
-    if 'param_penal_wt' in config:
+    if config['param_penal_wt'] != 0.:
         print "Applying penalty on parameter norm"
         assert config['param_penal_wt'] > 0
         params_flat = cgt.concatenate([p.flatten() for p in params])
@@ -176,53 +178,37 @@ def make_funcs(net_in, net_out, config, dbg_out=None):
     f_surr = get_surrogate_func([net_in, Y],
                                 net_out + dbg_out,
                                 [loss_raw], params)
+    # TODO_TZ f_step seems not to fail if X has wrong dim
     return params, f_step, None, None, f_surr
 
 
 def rmsprop_update(grad, state):
-    state.sqgrad[:] *= state.decay_rate
-    state.count *= state.decay_rate
-    np.square(grad, out=state.scratch) # scratch=g^2
-    state.sqgrad += state.scratch
-    state.count += 1
-    np.sqrt(state.sqgrad, out=state.scratch) # scratch = sum of squares
-    np.divide(state.scratch, np.sqrt(state.count), out=state.scratch) # scratch = rms
-    np.divide(grad, state.scratch, out=state.scratch) # scratch = grad/rms
-    np.multiply(state.scratch, state.step_size, out=state.scratch)
-    state.theta[:] += state.scratch
-    # TODO_TZ double check "+=" is the only change
+    state['sqgrad'][:] *= state['decay_rate']
+    state['count'] *= state['decay_rate']
+    np.square(grad, out=state['scratch']) # scratch=g^2
+    state['sqgrad'] += state['scratch']
+    state['count'] += 1
+    np.sqrt(state['sqgrad'], out=state['scratch']) # scratch = sum of squares
+    np.divide(state['scratch'], np.sqrt(state['count']), out=state['scratch']) # scratch = rms
+    np.divide(grad, state['scratch'], out=state['scratch']) # scratch = grad/rms
+    np.multiply(state['scratch'], state['step_size'], out=state['scratch'])
+    state['theta'][:] += state['scratch']
 
 
-def train(args, X, Y, dbg_iter=None, dbg_done=None):
-    if args['debug'] and (dbg_iter is None or dbg_done is None):
-        dbg_iter, dbg_done = example_debug(args, X, Y)
-    dbg_out = []
-    net_in, net_out = hybrid_network(args['num_inputs'], args['num_outputs'],
-                                     args['num_units'], args['num_sto'],
-                                     dbg_out=dbg_out)
-    params, f_step, f_sample, _, f_surr = \
-        make_funcs(net_in, net_out, args, dbg_out=dbg_out)
-    param_col = ParamCollection(params)
-    if 'snapshot' in args:
-        print "Loading params from previous snapshot"
-        optim_state = pickle.load(open(args['snapshot'], 'r'))
-    else:
-        optim_state = make_rmsprop_state(theta=param_col.get_value_flat(),
-                                         step_size=args['step_size'],
-                                         decay_rate=args['decay_rate'])
-        optim_state.theta = nn.init_array(
-            args['init_conf'], (param_col.get_total_size(), 1)).flatten()
-    param_col.set_value_flat(optim_state.theta)
-    print "Initialization"
-    pprint.pprint(param_col.get_values())
-    num_epochs, num_iters = 0, 0
-    while num_epochs < args['n_epochs']:
-        ind = np.random.choice(X.shape[0], args['size_batch'])
+def step(X, Y, workspace, config, dbg_iter=None, dbg_done=None):
+    if config['debug'] and (dbg_iter is None or dbg_done is None):
+        dbg_iter, dbg_done = example_debug(config, X, Y)
+    f_surr, f_step = workspace['f_surr'], workspace['f_step']
+    param_col = workspace['param_col']
+    optim_state = workspace['optim_state']
+    num_epochs = num_iters = 0
+    while num_epochs < config['n_epochs']:
+        ind = np.random.choice(X.shape[0], config['size_batch'])
         x, y = X[ind], Y[ind]
-        info = f_surr(x, y, num_samples=args['size_sample'])
+        info = f_surr(x, y, num_samples=config['size_sample'])
         grad = info['grad']
         rmsprop_update(param_col.flatten_values(grad), optim_state)
-        param_col.set_value_flat(optim_state.theta)
+        param_col.set_value_flat(optim_state['theta'])
         num_iters += 1
         if num_iters == Y.shape[0]:
             num_epochs += 1
@@ -231,7 +217,42 @@ def train(args, X, Y, dbg_iter=None, dbg_done=None):
             dbg_iter(num_epochs, num_iters, info, param_col, optim_state,
                      f_step, f_surr)
     if dbg_done: dbg_done(param_col, optim_state)
-    return optim_state
+    return param_col, optim_state
+
+
+def create(args):
+    dbg_out = []
+    net_in, net_out = hybrid_network(args['num_inputs'], args['num_outputs'],
+                                     args['num_units'], args['num_sto'],
+                                     dbg_out=dbg_out)
+    if args['dbg_out_full']: dbg_out = []
+    params, f_step, f_loss, f_grad, f_surr = \
+        make_funcs(net_in, net_out, args, dbg_out=dbg_out)
+    param_col = ParamCollection(params)
+    if 'snapshot' in args:
+        print "Loading params from previous snapshot"
+        optim_state = pickle.load(open(args['snapshot'], 'r'))
+        assert isinstance(optim_state, dict)
+    else:
+        theta = param_col.get_value_flat()
+        optim_state = dict(theta=theta, step_size=args['step_size'],
+                           decay_rate=args['decay_rate'],
+                           sqgrad=np.zeros_like(theta) + 1.e-6,
+                           scratch=np.empty_like(theta), count=0)
+        optim_state['theta'] = nn.init_array(
+            args['init_conf'], (param_col.get_total_size(), 1)).flatten()
+    param_col.set_value_flat(optim_state['theta'])
+    print "Initialization"
+    pprint.pprint(param_col.get_values())
+    workspace = {
+        'optim_state': optim_state,
+        'param_col': param_col,
+        'f_surr': f_surr,
+        'f_step': f_step,
+        'f_loss': f_loss,
+        'f_grad': f_grad
+    }
+    return workspace
 
 
 def example_debug(args, X, Y):
@@ -254,12 +275,12 @@ def example_debug(args, X, Y):
     it_theta_norm, it_theta_norm_comp = [], []
     def dbg_iter(num_epochs, num_iters, info, param_col, optim_state, f_step, f_surr):
         it_loss_surr.append(info['objective'])
-        it_grad_norm.append(np.linalg.norm(optim_state.scratch))
+        it_grad_norm.append(np.linalg.norm(optim_state['scratch']))
         it_grad_norm_comp.append([np.linalg.norm(g) for g in info['grad']])
-        it_theta_norm.append(np.linalg.norm(optim_state.theta))
+        it_theta_norm.append(np.linalg.norm(optim_state['theta']))
         it_theta_norm_comp.append([np.linalg.norm(t)
                                    for t in param_col.get_values()])
-        it_theta_comp.append(np.copy(optim_state.theta))
+        it_theta_comp.append(np.copy(optim_state['theta']))
         if num_iters == 0:  # new epoch
             print "Epoch %d" % num_epochs
             print "network parameters"
@@ -311,17 +332,5 @@ def example_debug(args, X, Y):
 if __name__ == "__main__":
     X, Y = data_synthetic_a(1000)
     X, Y = scale_data((X, Y))
-    state = train(DEFAULT_ARGS, X, Y)
-
-    # X, Y = generate_examples(10, np.array([3.]), np.array([0.]), [.1])
-    # X1, Y1 = generate_examples(10,
-    #                            np.array([3.]), np.array([0]),
-    #                            [0.5])
-    # X2, Y2 = generate_examples(10,
-    #                            np.array([2.]), np.array([0]),
-    #                            [0.1])
-    # X3, Y3 = generate_examples(10,
-    #                            np.array([4.]), np.array([0]),
-    #                            [0.9])
-    # X = np.concatenate([X1, X2, X3])
-    # Y = np.concatenate([Y1, Y2, Y3])
+    problem = create(DEFAULT_ARGS)
+    step(X, Y, problem, DEFAULT_ARGS)
