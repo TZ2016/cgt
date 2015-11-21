@@ -21,6 +21,10 @@ def exp(x):
     "Applies function exp elementwise to argument x"
     return core.Result(core.ElwiseUnary("exp"), [x])
     
+def exp2(x):
+    "Applies function exp2 elementwise to argument x"
+    return core.Result(core.ElwiseUnary("exp2"), [x])
+    
 def iceil(x):
     "Applies function iceil elementwise to argument x"
     return core.Result(core.ElwiseUnary("iceil"), [x])
@@ -32,6 +36,10 @@ def ifloor(x):
 def log(x):
     "Applies function log elementwise to argument x"
     return core.Result(core.ElwiseUnary("log"), [x])
+    
+def log2(x):
+    "Applies function log2 elementwise to argument x"
+    return core.Result(core.ElwiseUnary("log2"), [x])
     
 def negative(x):
     "Applies function negative elementwise to argument x"
