@@ -873,11 +873,12 @@ def get_surrogate_func(_inputs, _outputs, _costs, _wrt):
             # does not help with multiple examples
             assert all([i.shape[0] == m for i in inputs]), "one example at a time"
             if m == 1: warnings.warn('Sampling network only once')
-            obj, obj_vec, wt_vec, obj_unwt_vec, grad_obj = \
+            obj, obj_vec, wt_vec, wt_vec_log, obj_unwt_vec, grad_obj = \
                 f_surr_parser(f_surr(*(list(inputs) + s_rand + s_loss)))
             res['objective'] = obj  # scalar
             res['objective_vec'] = obj_vec  # (num_samples, 1)
             res['weights'] = wt_vec  # (num_samples, 1)
+            res['weights_raw_log'] = wt_vec_log  # (num_samples, 1)
             res['objective_unweighted'] = obj_unwt_vec  # (num_samples, 1)
             res['grad'] = grad_obj  # list[shape(param)]; gradient of each param
         return res
@@ -886,9 +887,9 @@ def get_surrogate_func(_inputs, _outputs, _costs, _wrt):
     # for the rest, keys belong to the old graph, and values the new
     _obj_unwt_vec, _args_cost, _args_rand = _get_surr_costs(_costs)
     # importance weights: P(y|h, x) scaled. by P(y|x) = \sum P(y|h,x)
-    _wt_vec = _args_cost.values()[0]  # TODO_TZ [0] is just a makeshift
+    _wt_vec_log = _args_cost.values()[0]  # TODO_TZ [0] is just a makeshift
     # _wt_vec -= cgt.mean(_wt_vec)  # min and mean both causes inf a lot
-    _wt_vec = cgt.exp(_wt_vec)
+    _wt_vec = cgt.exp(_wt_vec_log)
     _wt_vec = cgt.safe_div(_wt_vec, cgt.sum(_wt_vec))
     # true objective, or expected complete log-lik: log P(y|x)
     # before weighting: log P(h|x) + log P(y|h,x) = log P(y,h|x)
@@ -904,7 +905,7 @@ def get_surrogate_func(_inputs, _outputs, _costs, _wrt):
     f_sample = cgt.function(_inputs, _f_sample_out)
     # function for calculating gradient of the true loss
     _f_surr_out, f_surr_parser = _multi_slice(
-        _obj, _obj_vec, _wt_vec, _obj_unwt_vec, _grad_obj
+        _obj, _obj_vec, _wt_vec, _wt_vec_log, _obj_unwt_vec, _grad_obj
     )
     f_surr = cgt.function(
         _inputs + _args_rand.values() + _args_cost.values(), _f_surr_out
