@@ -20,35 +20,36 @@ from cgt.distributions import gaussian_diagonal
 DUMP_ROOT = os.path.join(os.environ['HOME'], 'workspace/cgt/tmp/')
 DEFAULT_ARGS = {
     # network architecture
-    "num_inputs": 1,
-    "num_outputs": 2,
-    "num_units": [2, 4, 4],
-    "num_sto": [0, 2, 2],
-    "no_bias": False,
-    "out_var": False,
-    "const_var": .05,
+    "num_inputs": 1,  # size of net input
+    "num_outputs": 1,  # size of net output
+    "num_units": [2, 4, 4],  # (hidden only) layer-wise number of neurons
+    "num_sto": [0, 2, 2],  # (hidden only) layer-wise number of stochastic neurons
+    "no_bias": False,  # no bias terms
+    "out_var": False,  # net outputs diagonal variance
+    "const_var": .05,  # assume isotropic variance in all directions
+    "var_in": True,  # variance fed as input
 
     # training parameters
     "n_epochs": 20,
-    "step_size": .05,
-    "decay_rate": .95,
+    "step_size": .05,  # RMSProp,
+    "decay_rate": .95,  # RMSProp
 
     # training logistics
     "size_sample": 30,  # #times to sample the network per data pair
     "size_batch": 1,  # #data pairs for each gradient estimate
     # "init_conf": nn.IIDGaussian(std=.1),
-    "init_conf": nn.XavierNormal(scale=1.),
-    "param_penal_wt": 0.,
+    "init_conf": nn.XavierNormal(scale=1.),  # initialization
+    "param_penal_wt": 0.,  # weight decay (0 means none)
     # "snapshot": os.path.join(DUMP_ROOT, '_1447739075/__snapshot.pkl'),
 
     # debugging
     "debug": True,
+    "dump_path": os.path.join(DUMP_ROOT,'_%d/' % int(time.time())),
+    "dbg_out_full": True,
+    "dbg_plot_samples": True,
     "dbg_batch": 100,
     "dbg_plot_x_dim": 0,
-    "dbg_plot_y_dim": 1,
-    "dbg_plot_samples": True,
-    "dbg_out_full": True,
-    "dump_path": os.path.join(DUMP_ROOT,'_%d/' % int(time.time())),
+    "dbg_plot_y_dim": 0,
 }
 
 
@@ -84,11 +85,14 @@ def data_synthetic_a(N):
     # x = y + 0.3 sin(2 * pi * y) + e, e ~ Unif(-0.1, 0.1)
     Y = np.random.uniform(0., 1., N)
     X = Y + 0.3 * np.sin(2. * Y * np.pi) + np.random.uniform(-.1, .1, N)
-    Y, X = Y.reshape((N, 1)), X.reshape((N, 1))
-    Z = np.random.normal(scale=.05, size=(N, 1))
+    Z = np.random.normal(scale=.05, size=N)
     # X = np.hstack([X, Z])
-    Y = np.hstack([Y, Z])
-    return X, Y
+    # Y = np.hstack([Y, Z])
+    i_s =np.argsort(X, axis=0)
+    Y, X = np.reshape(Y[i_s], (N, 1)), np.reshape(X[i_s], (N, 1))
+    Y_var = np.array([np.var(Y[i:i+20]) for i in range(N-20)] +
+                     [np.var(Y[N-20:])] * 20).reshape((N, 1))
+    return X, Y, Y_var
 
 def data_sigm_multi(N, p):
     if not isinstance(p, (list, tuple)):
@@ -152,10 +156,19 @@ def make_funcs(net_in, net_out, config, dbg_out=None):
     Y = cgt.matrix("Y")
     params = nn.get_parameters(net_out)
     size_batch, size_out = net_out.shape
+    inputs = [net_in]
     if config['no_bias']:
         print "Excluding bias"
         params = [p for p in params if not p.name.endswith(".b")]
-    if config['out_var']:  # net outputs variance
+    if config['var_in']:
+        print "Input includes diagonal variance"
+        assert not config['out_var']
+        # TODO_TZ diagonal for now
+        in_var = cgt.matrix('V', fixed_shape=(None, config['num_inputs']))
+        inputs.append(in_var)
+        out_mean, out_var = net_out, in_var
+    elif config['out_var']:  # net outputs variance
+        print "Network outputs diagonal variance"
         cutoff = size_out // 2
         out_mean, out_var = net_out[:, :cutoff], net_out[:, cutoff:]
         # out_var = out_var ** 2 + 1.e-6
@@ -174,8 +187,8 @@ def make_funcs(net_in, net_out, config, dbg_out=None):
         loss_param *= config['param_penal_wt']
         loss_raw += loss_param
     # end of loss definition
-    f_step = cgt.function([net_in], net_out)
-    f_surr = get_surrogate_func([net_in, Y],
+    f_step = cgt.function(inputs, net_out)
+    f_surr = get_surrogate_func(inputs + [Y],
                                 net_out + dbg_out,
                                 [loss_raw], params)
     # TODO_TZ f_step seems not to fail if X has wrong dim
@@ -195,9 +208,9 @@ def rmsprop_update(grad, state):
     state['theta'][:] += state['scratch']
 
 
-def step(X, Y, workspace, config, dbg_iter=None, dbg_done=None):
+def step(X, Y, workspace, config, Y_var=None, dbg_iter=None, dbg_done=None):
     if config['debug'] and (dbg_iter is None or dbg_done is None):
-        dbg_iter, dbg_done = example_debug(config, X, Y)
+        dbg_iter, dbg_done = example_debug(config, X, Y, Y_var=Y_var)
     f_surr, f_step = workspace['f_surr'], workspace['f_step']
     param_col = workspace['param_col']
     optim_state = workspace['optim_state']
@@ -205,7 +218,11 @@ def step(X, Y, workspace, config, dbg_iter=None, dbg_done=None):
     while num_epochs < config['n_epochs']:
         ind = np.random.choice(X.shape[0], config['size_batch'])
         x, y = X[ind], Y[ind]
-        info = f_surr(x, y, num_samples=config['size_sample'])
+        if config['var_in']:
+            y_var = Y_var[ind]
+            info = f_surr(x, y_var, y, num_samples=config['size_sample'])
+        else:
+            info = f_surr(x, y, num_samples=config['size_sample'])
         grad = info['grad']
         rmsprop_update(param_col.flatten_values(grad), optim_state)
         param_col.set_value_flat(optim_state['theta'])
@@ -255,7 +272,7 @@ def create(args):
     return workspace
 
 
-def example_debug(args, X, Y):
+def example_debug(args, X, Y, Y_var=None):
     def safe_path(rel_path):
         abs_path = os.path.join(out_path, rel_path)
         d = os.path.dirname(abs_path)
@@ -287,8 +304,13 @@ def example_debug(args, X, Y):
             pprint.pprint(param_col.get_values())
             print "Gradient norm = %f" % it_grad_norm[-1]
             if args['dbg_plot_samples']:
-                s_X = X[np.random.choice(N, size=args['dbg_batch'], replace=False), :]
-                s_Y_mean, s_Y_var = f_step(s_X)
+                s_ind = np.random.choice(N, size=args['dbg_batch'], replace=False)
+                s_X = X[s_ind, :]
+                if args['var_in']:
+                    s_Y_var_in = Y_var[s_ind, :]
+                    s_Y_mean, s_Y_var = f_step(s_X, s_Y_var_in)
+                else:
+                    s_Y_mean, s_Y_var = f_step(s_X)
                 err_plt = lambda: plt.errorbar(s_X[:, _ix], s_Y_mean[:, _iy],
                                                yerr=np.sqrt(s_Y_var[:, _iy]), fmt='none')
                 ep_net_distr.append((num_epochs, err_plt))
@@ -330,7 +352,7 @@ def example_debug(args, X, Y):
     return dbg_iter, dbg_done
 
 if __name__ == "__main__":
-    X, Y = data_synthetic_a(1000)
+    X, Y, Y_var = data_synthetic_a(1000)
     X, Y = scale_data((X, Y))
     problem = create(DEFAULT_ARGS)
-    step(X, Y, problem, DEFAULT_ARGS)
+    step(X, Y, problem, DEFAULT_ARGS, Y_var=Y_var)
