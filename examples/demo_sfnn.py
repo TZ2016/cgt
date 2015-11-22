@@ -27,18 +27,18 @@ DEFAULT_ARGS = {
     "no_bias": False,  # no bias terms
     "out_var": False,  # net outputs diagonal variance
     "const_var": .05,  # assume isotropic variance in all directions
-    "var_in": True,  # variance fed as input
+    "var_in": False,  # variance fed as input
 
     # training parameters
-    "n_epochs": 20,
-    "step_size": .05,  # RMSProp,
-    "decay_rate": .95,  # RMSProp
+    "n_epochs": 50,
+    "opt_method": 'rmsprop',  # adam, rmsprop
+    "step_size": .05,
 
     # training logistics
     "size_sample": 30,  # #times to sample the network per data pair
     "size_batch": 1,  # #data pairs for each gradient estimate
-    # "init_conf": nn.IIDGaussian(std=.1),
-    "init_conf": nn.XavierNormal(scale=1.),  # initialization
+    "init_conf": nn.IIDGaussian(std=.1),
+    # "init_conf": nn.XavierNormal(scale=1.),  # initialization
     "param_penal_wt": 0.,  # weight decay (0 means none)
     # "snapshot": os.path.join(DUMP_ROOT, '_1447739075/__snapshot.pkl'),
 
@@ -199,6 +199,12 @@ def make_funcs(net_in, net_out, config, dbg_out=None):
     # TODO_TZ f_step seems not to fail if X has wrong dim
     return params, f_step, None, None, f_surr
 
+def rmsprop_create(theta, step_size, decay_rate=.95, eps=1.e-6):
+    optim_state = dict(theta=theta, step_size=step_size,
+                   decay_rate=decay_rate,
+                   sqgrad=np.zeros_like(theta) + eps,
+                   scratch=np.empty_like(theta), count=0)
+    return optim_state
 
 def rmsprop_update(grad, state):
     state['sqgrad'][:] *= state['decay_rate']
@@ -212,6 +218,26 @@ def rmsprop_update(grad, state):
     np.multiply(state['scratch'], state['step_size'], out=state['scratch'])
     state['theta'][:] += state['scratch']
 
+def adam_create(theta, step_size=1.e-3, beta1=.9, beta2=.999, eps=1.e-8):
+    optim_state = dict(theta=theta, step_size=step_size,
+                       beta1=beta1, beta2=beta2, eps=eps, _t=0,
+                       _m=np.zeros_like(theta), _v=np.zeros_like(theta),
+                       scratch=np.zeros_like(theta))
+    return optim_state
+
+def adam_update(grad, state):
+    state['_t'] += 1
+    state['_m'] *= state['beta1']
+    state['_m'] += (1 - state['beta1']) * grad
+    state['_v'] *= state['beta2']
+    np.square(grad, out=state['scratch'])
+    state['_v'] += (1 - state['beta2']) * state['scratch']
+    np.sqrt(state['_v'], out=state['scratch'])
+    np.divide(state['_m'], state['scratch'] + state['eps'], out=state['scratch'])
+    state['scratch'] *= state['step_size'] * \
+                        np.sqrt(1. - state['beta2'] ** state['_t']) / \
+                        (1. - state['beta1'] ** state['_t'])
+    state['theta'] += state['scratch']
 
 def step(X, Y, workspace, config, Y_var=None, dbg_iter=None, dbg_done=None):
     if config['debug'] and (dbg_iter is None or dbg_done is None):
@@ -229,16 +255,15 @@ def step(X, Y, workspace, config, Y_var=None, dbg_iter=None, dbg_done=None):
         else:
             info = f_surr(x, y, num_samples=config['size_sample'])
         grad = info['grad']
-        rmsprop_update(param_col.flatten_values(grad), optim_state)
+        workspace['update'](param_col.flatten_values(grad), optim_state)
         param_col.set_value_flat(optim_state['theta'])
         num_iters += 1
         if num_iters == Y.shape[0]:
             num_epochs += 1
             num_iters = 0
         if dbg_iter:
-            dbg_iter(num_epochs, num_iters, info, param_col, optim_state,
-                     f_step, f_surr)
-    if dbg_done: dbg_done(param_col, optim_state)
+            dbg_iter(num_epochs, num_iters, info, workspace)
+    if dbg_done: dbg_done(workspace)
     return param_col, optim_state
 
 
@@ -257,10 +282,15 @@ def create(args):
         assert isinstance(optim_state, dict)
     else:
         theta = param_col.get_value_flat()
-        optim_state = dict(theta=theta, step_size=args['step_size'],
-                           decay_rate=args['decay_rate'],
-                           sqgrad=np.zeros_like(theta) + 1.e-6,
-                           scratch=np.empty_like(theta), count=0)
+        method = args['opt_method'].lower()
+        if method == 'rmsprop':
+            optim_state = rmsprop_create(theta, step_size=args['step_size'])
+            f_update = rmsprop_update
+        elif method == 'adam':
+            optim_state = adam_create(theta, step_size=args['step_size'])
+            f_update = adam_update
+        else:
+            raise ValueError('unknown optimization method: %s' % method)
         optim_state['theta'] = nn.init_array(
             args['init_conf'], (param_col.get_total_size(), 1)).flatten()
     param_col.set_value_flat(optim_state['theta'])
@@ -272,7 +302,8 @@ def create(args):
         'f_surr': f_surr,
         'f_step': f_step,
         'f_loss': f_loss,
-        'f_grad': f_grad
+        'f_grad': f_grad,
+        'update': f_update,
     }
     return workspace
 
@@ -295,7 +326,10 @@ def example_debug(args, X, Y, Y_var=None):
     it_theta_comp = []
     it_grad_norm, it_grad_norm_comp = [], []
     it_theta_norm, it_theta_norm_comp = [], []
-    def dbg_iter(num_epochs, num_iters, info, param_col, optim_state, f_step, f_surr):
+    def dbg_iter(num_epochs, num_iters, info, workspace):
+        optim_state = workspace['optim_state']
+        param_col = workspace['param_col']
+        f_step = workspace['f_step']
         it_loss_surr.append(info['objective'])
         it_grad_norm.append(np.linalg.norm(optim_state['scratch']))
         it_grad_norm_comp.append([np.linalg.norm(g) for g in info['grad']])
@@ -319,7 +353,9 @@ def example_debug(args, X, Y, Y_var=None):
                 err_plt = lambda: plt.errorbar(s_X[:, _ix], s_Y_mean[:, _iy],
                                                yerr=np.sqrt(s_Y_var[:, _iy]), fmt='none')
                 ep_net_distr.append((num_epochs, err_plt))
-    def dbg_done(param_col, optim_state):
+    def dbg_done(workspace):
+        param_col = workspace['param_col']
+        optim_state = workspace['optim_state']
         # save params
         pickle.dump(args, open(safe_path('args.pkl'), 'w'))
         pickle.dump(param_col.get_values(), open(safe_path('params.pkl'), 'w'))
