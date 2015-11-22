@@ -64,12 +64,17 @@ print cgt.get_config(True)
 cgt.check_source()
 
 
-def scale_data(Xs, scalars=None):
-    if not scalars:
-        scalars = [StandardScaler() for _ in range(len(Xs))]
-    assert len(scalars) == len(Xs)
-    Xs = [scalar.fit_transform(X) for X, scalar in zip(Xs, scalars)]
-    return Xs
+def scale_data(X, Y, Y_var=None, scalers=None):
+    if not scalers:
+        scalers = [StandardScaler() for _ in range(2)]
+    assert len(scalers) == 2
+    s_X = scalers[0].fit_transform(X)
+    s_Y = scalers[1].fit_transform(Y)
+    if Y_var is not None:
+        scalers[1].with_mean = False
+        s_Y_var = np.square(scalers[1].transform(np.sqrt(Y_var)))
+        return s_X, s_Y, s_Y_var
+    return s_X, s_Y
 
 def generate_examples(N, x, y, p_y):
     X = x * np.ones((N, x.size))
@@ -353,6 +358,6 @@ def example_debug(args, X, Y, Y_var=None):
 
 if __name__ == "__main__":
     X, Y, Y_var = data_synthetic_a(1000)
-    X, Y = scale_data((X, Y))
+    X, Y, Y_var = scale_data(X, Y, Y_var=Y_var)
     problem = create(DEFAULT_ARGS)
     step(X, Y, problem, DEFAULT_ARGS, Y_var=Y_var)
