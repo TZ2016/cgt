@@ -203,7 +203,7 @@ def rmsprop_create(theta, step_size, decay_rate=.95, eps=1.e-6):
     optim_state = dict(theta=theta, step_size=step_size,
                    decay_rate=decay_rate,
                    sqgrad=np.zeros_like(theta) + eps,
-                   scratch=np.empty_like(theta), count=0)
+                   scratch=np.empty_like(theta), count=0, type='rmsprop')
     return optim_state
 
 def rmsprop_update(grad, state):
@@ -222,7 +222,7 @@ def adam_create(theta, step_size=1.e-3, beta1=.9, beta2=.999, eps=1.e-8):
     optim_state = dict(theta=theta, step_size=step_size,
                        beta1=beta1, beta2=beta2, eps=eps, _t=0,
                        _m=np.zeros_like(theta), _v=np.zeros_like(theta),
-                       scratch=np.zeros_like(theta))
+                       scratch=np.zeros_like(theta), type='adam')
     return optim_state
 
 def adam_update(grad, state):
@@ -281,6 +281,12 @@ def create(args):
         print "Loading params from previous snapshot"
         optim_state = pickle.load(open(args['snapshot'], 'r'))
         assert isinstance(optim_state, dict)
+        if optim_state['type'] == 'adam':
+            f_update = adam_update
+        elif optim_state['type'] == 'rmsprop':
+            f_update = rmsprop_update
+        else:
+            raise ValueError
     else:
         theta = param_col.get_value_flat()
         method = args['opt_method'].lower()
