@@ -873,10 +873,9 @@ def get_surrogate_func(_inputs, _outputs, _costs, _wrt):
             # does not help with multiple examples
             assert all([i.shape[0] == m for i in inputs]), "one example at a time"
             if m == 1: warnings.warn('Sampling network only once')
-            obj, obj_vec, wt_vec, wt_vec_log, exp_val, obj_unwt_vec, grad_obj = \
+            obj, obj_vec, wt_vec, wt_vec_log, obj_unwt_vec, grad_obj = \
                 f_surr_parser(f_surr(*(list(inputs) + s_rand + s_loss)))
             res['objective'] = obj  # scalar
-            res['weights_exp'] = exp_val
             res['objective_vec'] = obj_vec  # (num_samples, 1)
             res['weights'] = wt_vec  # (num_samples, 1)
             res['weights_raw_log'] = wt_vec_log  # (num_samples, 1)
@@ -891,8 +890,9 @@ def get_surrogate_func(_inputs, _outputs, _costs, _wrt):
     _wt_vec_log = _args_cost.values()[0]  # TODO_TZ [0] is just a makeshift
     _exp_cap = 88 - cgt.log(_wt_vec_log.shape[0])  # for float32, exp(88) < inf
     # _exp_val = -cgt.max(cgt.max(_wt_vec_log) - _exp_cap, cgt.max(-_wt_vec_log))
-    _exp_val = -cgt.max(_wt_vec_log) + _exp_cap
-    _wt_vec = cgt.exp(_wt_vec_log + _exp_val)  # hack for underflow issue
+    # _exp_val = -cgt.max(_wt_vec_log) + _exp_cap
+    # due to floating point error, _exp_val is not accurate
+    _wt_vec = cgt.exp(_wt_vec_log - cgt.max(_wt_vec_log) + _exp_cap)  # hack for underflow issue
     _wt_vec = cgt.safe_div(_wt_vec, cgt.sum(_wt_vec))
     # true objective, or expected complete log-lik: log P(y|x)
     # before weighting: log P(h|x) + log P(y|h,x) = log P(y,h|x)
@@ -908,7 +908,7 @@ def get_surrogate_func(_inputs, _outputs, _costs, _wrt):
     f_sample = cgt.function(_inputs, _f_sample_out)
     # function for calculating gradient of the true loss
     _f_surr_out, f_surr_parser = _multi_slice(
-        _obj, _obj_vec, _wt_vec, _wt_vec_log, _exp_val, _obj_unwt_vec, _grad_obj
+        _obj, _obj_vec, _wt_vec, _wt_vec_log, _obj_unwt_vec, _grad_obj
     )
     f_surr = cgt.function(
         _inputs + _args_rand.values() + _args_cost.values(), _f_surr_out
