@@ -2,7 +2,6 @@
 
 import os
 import cgt
-import time
 import warnings
 import traceback
 import pprint
@@ -15,42 +14,6 @@ from sklearn.preprocessing import StandardScaler
 from scipy.special import expit as sigmoid
 from cgt.utility.param_collection import ParamCollection
 from cgt.distributions import gaussian_diagonal
-
-
-DUMP_ROOT = os.path.join(os.path.dirname(os.path.realpath(__file__)), '_tmp')
-DEFAULT_ARGS = {
-    # network architecture
-    "num_inputs": 1,  # size of net input
-    "num_outputs": 1,  # size of net output
-    "num_units": [2, 4, 4],  # (hidden only) layer-wise number of neurons
-    "num_sto": [0, 2, 2],  # (hidden only) layer-wise number of stochastic neurons
-    "no_bias": False,  # no bias terms
-    "out_var": False,  # net outputs diagonal variance
-    "const_var": .05,  # assume isotropic variance in all directions
-    "var_in": False,  # variance fed as input
-
-    # training parameters
-    "n_epochs": 10,
-    "opt_method": 'adam',  # adam, rmsprop
-    "step_size": .05,
-
-    # training logistics
-    "size_sample": 30,  # #times to sample the network per data pair
-    "size_batch": 1,  # #data pairs for each gradient estimate
-    "init_conf": nn.IIDGaussian(std=.1),
-    # "init_conf": nn.XavierNormal(scale=1.),  # initialization
-    "param_penal_wt": 0.,  # weight decay (0 means none)
-    # "snapshot": os.path.join(DUMP_ROOT, '_1447739075/__snapshot.pkl'),
-
-    # debugging
-    "debug": True,
-    "dump_path": os.path.join(DUMP_ROOT,'_%d/' % int(time.time())),
-    "dbg_out_full": True,
-    "dbg_plot_samples": True,
-    "dbg_batch": 100,
-    "dbg_plot_x_dim": 0,
-    "dbg_plot_y_dim": 0,
-}
 
 
 def err_handler(type, flag):
@@ -298,8 +261,15 @@ def create(args):
             f_update = adam_update
         else:
             raise ValueError('unknown optimization method: %s' % method)
+        init_method = args['init_conf']
+        if init_method == 'XavierNormal':
+            init_params = nn.XavierNormal(**args['init_conf_params'])
+        elif init_method == 'gaussian':
+            init_params = nn.IIDGaussian(**args['init_conf_params'])
+        else:
+            raise ValueError('unknown init distribution')
         optim_state['theta'] = nn.init_array(
-            args['init_conf'], (param_col.get_total_size(), 1)).flatten()
+            init_params, (param_col.get_total_size(), 1)).flatten()
     param_col.set_value_flat(optim_state['theta'])
     print "Initialization"
     pprint.pprint(param_col.get_values())
@@ -432,6 +402,16 @@ def example_debug(args, X, Y, Y_var=None):
     return dbg_iter, dbg_done
 
 if __name__ == "__main__":
+    import yaml
+    import time
+
+    DUMP_ROOT = os.path.join(os.path.dirname(os.path.realpath(__file__)), '_tmp')
+    PARAMS_PATH = os.path.join(DUMP_ROOT, '../sfnn_params.yaml')
+    DEFAULT_ARGS = yaml.load(open(PARAMS_PATH, 'r'))
+    DEFAULT_ARGS['dump_path'] = os.path.join(DUMP_ROOT,'_%d/' % int(time.time()))
+    print "Default args:"
+    pprint.pprint(DEFAULT_ARGS)
+
     X, Y, Y_var = data_synthetic_a(1000)
     X, Y, Y_var = scale_data(X, Y, Y_var=Y_var)
     problem = create(DEFAULT_ARGS)

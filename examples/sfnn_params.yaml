@@ -1,0 +1,34 @@
+
+# SFNN
+
+num_inputs: 1  # size of net input
+num_outputs: 1  # size of net output
+num_units: [2, 4, 4]  # (hidden only) layer-wise number of neurons
+num_sto: [0, 2, 2]  # (hidden only) layer-wise number of stochastic neurons
+no_bias: False  # no bias terms
+out_var: False  # net outputs diagonal variance
+const_var: .05  # assume isotropic variance in all directions
+var_in: False  # variance fed as input
+
+# training parameters
+n_epochs: 10
+opt_method: 'adam'  # adam, rmsprop
+step_size: .05
+
+# training logistics
+size_sample: 30  # #times to sample the network per data pair
+size_batch: 1  # #data pairs for each gradient estimate
+init_conf: 'XavierNormal'  # initialization
+init_conf_params:
+    scale: 1.
+param_penal_wt: 0.  # weight decay (0 means none)
+#    snapshot: "DYNAMICALLY SET"
+
+# debugging
+debug: True
+#    dump_path: "DYNAMICALLY SET"
+dbg_out_full: True
+dbg_plot_samples: True
+dbg_batch: 100
+dbg_plot_x_dim: 0
+dbg_plot_y_dim: 0
