@@ -128,14 +128,13 @@ def make_funcs(net_in, net_out, config, dbg_out=None):
     if config['no_bias']:
         print "Excluding bias"
         params = [p for p in params if not p.name.endswith(".b")]
-    if config['var_in']:
+    if config['variance'] == 'in':
         print "Input includes diagonal variance"
-        assert not config['out_var']
         # TODO_TZ diagonal for now
         in_var = cgt.matrix('V', fixed_shape=(None, config['num_inputs']))
         inputs.append(in_var)
         out_mean, out_var = net_out, in_var
-    elif config['out_var']:  # net outputs variance
+    elif config['variance'] == 'out':  # net outputs variance
         print "Network outputs diagonal variance"
         cutoff = size_out // 2
         out_mean, out_var = net_out[:, :cutoff], net_out[:, cutoff:]
@@ -143,8 +142,9 @@ def make_funcs(net_in, net_out, config, dbg_out=None):
         out_var = cgt.exp(out_var) + 1.e-6
     else:
         print "Constant variance"
+        assert isinstance(config['variance'], float)
         out_mean = net_out
-        out_var = cgt.fill(config['const_var'], [size_batch, size_out])
+        out_var = cgt.fill(config['variance'], [size_batch, size_out])
     net_out = [out_mean, out_var]
     loss_raw = gaussian_diagonal.logprob(Y, out_mean, out_var)
     if config['param_penal_wt'] != 0.:
@@ -205,7 +205,7 @@ def adam_update(grad, state):
 def step(X, Y, workspace, config, Y_var=None, dbg_iter=None, dbg_done=None):
     if config['debug'] and (dbg_iter is None or dbg_done is None):
         dbg_iter, dbg_done = example_debug(config, X, Y, Y_var=Y_var)
-    if config['var_in']: assert Y_var is not None
+    if config['variance'] == 'in': assert Y_var is not None
     f_surr, f_step = workspace['f_surr'], workspace['f_step']
     param_col = workspace['param_col']
     optim_state = workspace['optim_state']
@@ -213,7 +213,7 @@ def step(X, Y, workspace, config, Y_var=None, dbg_iter=None, dbg_done=None):
     while num_epochs < config['n_epochs']:
         ind = np.random.choice(X.shape[0], config['size_batch'])
         x, y = X[ind], Y[ind]
-        if config['var_in']:
+        if config['variance'] == 'in':
             y_var = Y_var[ind]
             info = f_surr(x, y_var, y, num_samples=config['size_sample'])
         else:
@@ -241,7 +241,7 @@ def create(args):
         make_funcs(net_in, net_out, args, dbg_out=dbg_out)
     param_col = ParamCollection(params)
     if 'snapshot' in args:
-        print "Loading params from previous snapshot"
+        print "Loading params from previous snapshot: %s" % args['snapshot']
         optim_state = pickle.load(open(args['snapshot'], 'r'))
         assert isinstance(optim_state, dict)
         if optim_state['type'] == 'adam':
@@ -253,6 +253,7 @@ def create(args):
     else:
         theta = param_col.get_value_flat()
         method = args['opt_method'].lower()
+        print "Initializing theta from fresh"
         if method == 'rmsprop':
             optim_state = rmsprop_create(theta, step_size=args['step_size'])
             f_update = rmsprop_update
@@ -261,18 +262,16 @@ def create(args):
             f_update = adam_update
         else:
             raise ValueError('unknown optimization method: %s' % method)
-        init_method = args['init_conf']
+        init_method = args['init_theta']['distr']
         if init_method == 'XavierNormal':
-            init_params = nn.XavierNormal(**args['init_conf_params'])
+            init_theta = nn.XavierNormal(**args['init_theta']['params'])
         elif init_method == 'gaussian':
-            init_params = nn.IIDGaussian(**args['init_conf_params'])
+            init_theta = nn.IIDGaussian(**args['init_theta']['params'])
         else:
             raise ValueError('unknown init distribution')
         optim_state['theta'] = nn.init_array(
-            init_params, (param_col.get_total_size(), 1)).flatten()
+            init_theta, (param_col.get_total_size(), 1)).flatten()
     param_col.set_value_flat(optim_state['theta'])
-    print "Initialization"
-    pprint.pprint(param_col.get_values())
     workspace = {
         'optim_state': optim_state,
         'param_col': param_col,
@@ -318,7 +317,7 @@ def example_debug(args, X, Y, Y_var=None):
     N, _ = X.shape
     out_path = args['dump_path']
     conv_smoother = lambda x: np.convolve(x, [1. / N] * N, mode='valid')
-    _ix, _iy = args['dbg_plot_x_dim'], args['dbg_plot_y_dim']
+    _ix, _iy = args['dbg_plot_samples']['x_dim'], args['dbg_plot_samples']['y_dim']
     # cache
     ep_net_distr = []
     it_loss_surr = []
@@ -339,13 +338,12 @@ def example_debug(args, X, Y, Y_var=None):
         it_theta_comp.append(np.copy(optim_state['theta']))
         if num_iters == 0:  # new epoch
             print "Epoch %d" % num_epochs
-            print "network parameters"
-            pprint.pprint(param_col.get_values())
             print "Gradient norm = %f" % it_grad_norm[-1]
-            if args['dbg_plot_samples']:
-                s_ind = np.random.choice(N, size=args['dbg_batch'], replace=False)
+            print "Theta norm = %f" % it_theta_norm[-1]
+            if args['dbg_plot_samples']['plot']:
+                s_ind = np.random.choice(N, size=args['dbg_plot_samples']['batch'], replace=False)
                 s_X = X[s_ind, :]
-                if args['var_in']:
+                if args['variance'] == 'in':
                     s_Y_var_in = Y_var[s_ind, :]
                     s_Y_mean, s_Y_var = f_step(s_X, s_Y_var_in)
                 else:
@@ -361,6 +359,7 @@ def example_debug(args, X, Y, Y_var=None):
         param_col = workspace['param_col']
         optim_state = workspace['optim_state']
         # save params
+        print "Saving params to %s" % safe_path('.')
         pickle.dump(args, open(safe_path('args.pkl'), 'w'))
         pickle.dump(param_col.get_values(), open(safe_path('params.pkl'), 'w'))
         pickle.dump(optim_state, open(safe_path('__snapshot.pkl'), 'w'))
@@ -392,7 +391,7 @@ def example_debug(args, X, Y, Y_var=None):
         h_ax(axs[:-1], x='hide'); h_ax(axs, y='mm')
         f.tight_layout(); f.savefig(safe_path('norm_theta_cmp.png')); plt.close(f)
         # plot samples for each epoch
-        if args['dbg_plot_samples']:
+        if args['dbg_plot_samples']['plot']:
             for _e, _distr in enumerate(ep_net_distr):
                 _ttl = 'epoch_%d.png' % _e
                 plt.scatter(X[:, _ix], Y[:, _iy], alpha=0.5, color='y', marker='*')
