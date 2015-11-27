@@ -125,6 +125,10 @@ def safe_div(x, y):
     "Safe operation"
     return core.Result(core.SafeOp("safe_div", x, y), [x, y])
 
+def safe_lognorm(x, y):
+    "Safe operation"
+    return core.Result(core.SafeOp("safe_lognorm", x, y), [x, y])
+
 def safe_mul(x, y):
     "Safe operation"
     return core.Result(core.SafeOp("safe_mul", x, y), [x, y])

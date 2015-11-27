@@ -888,12 +888,10 @@ def get_surrogate_func(_inputs, _outputs, _costs, _wrt):
     _obj_unwt_vec, _args_cost, _args_rand = _get_surr_costs(_costs)
     # importance weights: P(y|h, x) scaled. by P(y|x) = \sum P(y|h,x)
     _wt_vec_log = _args_cost.values()[0]  # TODO_TZ [0] is just a makeshift
-    _exp_cap = 88 - cgt.log(_wt_vec_log.shape[0])  # for float32, exp(88) < inf
-    # _exp_val = -cgt.max(cgt.max(_wt_vec_log) - _exp_cap, cgt.max(-_wt_vec_log))
-    # _exp_val = -cgt.max(_wt_vec_log) + _exp_cap
-    # due to floating point error, _exp_val is not accurate
-    _wt_vec = cgt.exp(_wt_vec_log - cgt.max(_wt_vec_log) + _exp_cap)  # hack for underflow issue
-    _wt_vec = cgt.safe_div(_wt_vec, cgt.sum(_wt_vec))
+    # _exp_cap = 88 - cgt.log(_wt_vec_log.shape[0])  # for float32, exp(88) < inf
+    # _wt_vec = cgt.exp(_wt_vec_log - cgt.max(_wt_vec_log) + _exp_cap)  # hack for underflow issue
+    # _wt_vec = cgt.safe_div(_wt_vec, cgt.sum(_wt_vec))
+    _wt_vec = cgt.safe_lognorm(_wt_vec_log, 0)
     # true objective, or expected complete log-lik: log P(y|x)
     # before weighting: log P(h|x) + log P(y|h,x) = log P(y,h|x)
     _obj_vec = _wt_vec * _obj_unwt_vec
@@ -1655,6 +1653,7 @@ SafeOpInfo = namedtuple("SafeOpInfo", ("constructor", "opname", "params"))
 SAFEOP_INFO = {
     "safe_mul": SafeOpInfo(ElwiseBinary, '*', ('x', 'y')),
     "safe_div": SafeOpInfo(ElwiseBinary, '/', ('x', 'y')),
+    "safe_lognorm": SafeOpInfo(ElwiseBinary, '/', ('x', 'y'))
 }
 
 class SafeOp(Op):
@@ -1686,19 +1685,26 @@ class SafeOp(Op):
         def safe_op(reads, write):
             # skip the op element-wise for those x = 0, so that 0 * inf = 0
             x, y = reads
-            mask = np.logical_not(np.isclose(x, 0.))
-            if np.any(mask):
-                # if self.scalar_mask[0] True, then must be non-zero
-                if self.scalar_mask[0]:
-                    self.op.get_py_func(input_types)([x, y], write)
+            if self.opname in ['safe_mul', 'safe_div']:
+                mask = np.logical_not(np.isclose(x, 0.))
+                if np.any(mask):
+                    # if self.scalar_mask[0] True, then must be non-zero
+                    if self.scalar_mask[0]:
+                        self.op.get_py_func(input_types)([x, y], write)
+                    else:
+                        if not self.scalar_mask[1]: y = y[mask]
+                        write_t = np.zeros(np.sum(mask))
+                        self.op.get_py_func(input_types)([x[mask], y], write_t)
+                        write[np.logical_not(mask)] = 0.
+                        write[mask] = write_t
                 else:
-                    if not self.scalar_mask[1]: y = y[mask]
-                    write_t = np.zeros(np.sum(mask))
-                    self.op.get_py_func(input_types)([x[mask], y], write_t)
-                    write[np.logical_not(mask)] = 0.
-                    write[mask] = write_t
-            else:
-                write[...] = 0.
+                    write[...] = 0.
+            elif self.opname == 'safe_lognorm':
+                exp_cap = 88 - np.log(x.shape[0])
+                exp_val = min(exp_cap - np.max(x), -np.min(x))
+                wt = np.exp(x + exp_val)
+                res = wt / np.sum(wt)
+                write[...] = res
         return safe_op
     def get_native_compile_info(self, input_types, devtype):
         raise NotImplementedError
