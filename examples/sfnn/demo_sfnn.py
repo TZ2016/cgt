@@ -26,6 +26,30 @@ print cgt.get_config(True)
 cgt.check_source()
 
 
+def lstm_block(h_prev, c_prev, x_curr, size_x, size_c):
+    """
+    Construct a LSTM cell block of specified number of cells
+
+    :param h_prev: self activations at previous time step
+    :param c_prev: self memory state at previous time step
+    :param x_curr: inputs from previous layer at current time step
+    :param size_x: size of inputs
+    :param size_c: size of both c and h
+    :return: c and h at current time step
+    :rtype:
+    """
+    input_sums = nn.Affine(size_x, 4 * size_c)(x_curr) + \
+                 nn.Affine(size_x, 4 * size_c)(h_prev)
+    c_new = cgt.tanh(input_sums[:, 3*size_c:])
+    sigmoid_chunk = cgt.sigmoid(input_sums[:, :3*size_c])
+    in_gate = sigmoid_chunk[:, :size_c]
+    forget_gate = sigmoid_chunk[:, size_c:2*size_c]
+    out_gate = sigmoid_chunk[:, 2*size_c:3*size_c]
+    c_curr = forget_gate * c_prev + in_gate * c_new
+    h_curr = out_gate * cgt.tanh(c_curr)
+    return c_curr, h_curr
+
+
 def mask_layer(func, X, size_in, i_start, i_end=None):
     if i_end is None:
         i_start, i_end = 0, i_start
@@ -53,6 +77,40 @@ def hybrid_layer(X, size_in, size_out, size_random, dbg_out=[]):
     dbg_out.append(out)
     out = mask_layer(cgt.bernoulli, out, size_out, size_random)
     return out
+
+
+def lstm_layers(size_in, size_out, num_units):
+    """
+    Construct a recurrent neural network with multiple layers of LSTM units,
+    with each layer a block of cells sharing a common set of gate units.
+    Return list of inputs and a list of outputs for the net at one time step.
+    Inputs =  [ net_in, hidden layers ]
+    Outputs = [ hidden layers, net_out ]
+
+    :param size_in: input dimension
+    :param num_units: number of memory units for each layer
+    :param size_out: output dimension
+    :return:
+    :rtype: (int, list, list)
+    """
+    net_in = cgt.matrix("X", fixed_shape=(None, size_in))
+    net_c_prev, net_h_prev = [], []
+    net_c_curr, net_h_curr = [], []
+    prev_l_num_units, prev_out = size_in, net_in
+    for l_num_units in num_units:
+        c_prev = cgt.matrix(fixed_shape=(None, l_num_units))
+        h_prev = cgt.matrix(fixed_shape=(None, l_num_units))
+        c_curr, h_curr = lstm_block(h_prev, c_prev, prev_out,
+                                    prev_l_num_units, l_num_units)
+        net_c_prev.append(c_prev)
+        net_h_prev.append(h_prev)
+        net_c_curr.append(c_curr)
+        net_h_curr.append(h_curr)
+        prev_l_num_units = l_num_units
+        prev_out = h_curr
+    inputs = [net_in] + net_c_prev + net_h_prev
+    outputs = net_c_curr + net_h_curr
+    return inputs, outputs
 
 
 def hybrid_network(size_in, size_out, num_units, num_stos, dbg_out=[]):
