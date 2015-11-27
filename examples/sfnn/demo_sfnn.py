@@ -4,15 +4,16 @@ import os
 import cgt
 import traceback
 import pprint
-from cgt.core import get_surrogate_func
+from cgt.core import get_surrogate_func, Node
 from cgt import nn
 import numpy as np
 import pickle
 from cgt.utility.param_collection import ParamCollection
 from cgt.distributions import gaussian_diagonal
 
-from opt import *
-from debug import *
+from opt import rmsprop_create, rmsprop_update, adam_create, adam_update
+from debug import example_debug
+
 
 def err_handler(type, flag):
     print type, flag
@@ -25,19 +26,32 @@ print cgt.get_config(True)
 cgt.check_source()
 
 
+def mask_layer(func, X, size_in, i_start, i_end=None):
+    if i_end is None:
+        i_start, i_end = 0, i_start
+    assert isinstance(i_start, int) and isinstance(i_end, int)
+    assert -1 < i_start <= i_end <= size_in
+    if i_end == i_start:
+        return X
+    if i_end - i_start == size_in:
+        return func(X)
+    outs = []
+    if i_start > 0:
+        outs.append(X[:, :i_start])
+    outs.append(func(X[:, i_start:i_end]))
+    if i_end < size_in:
+        outs.append(X[:, i_end:])
+    out = cgt.concatenate(outs, axis=1)
+    return out
+
+
 def hybrid_layer(X, size_in, size_out, size_random, dbg_out=[]):
     assert size_out >= size_random >= 0
     out = cgt.sigmoid(nn.Affine(
         size_in, size_out, name="InnerProd(%d->%d)" % (size_in, size_out)
     )(X))
     dbg_out.append(out)
-    if size_random == 0:
-        return out
-    if size_random == size_out:
-        out_s = cgt.bernoulli(out)
-        return out_s
-    out_s = cgt.bernoulli(out[:, :size_random])
-    out = cgt.concatenate([out_s, out[:, size_random:]], axis=1)
+    out = mask_layer(cgt.bernoulli, out, size_out, size_random)
     return out
 
 

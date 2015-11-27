@@ -58,6 +58,7 @@ def example_debug(args, X, Y, Y_var=None):
                                    for t in param_col.get_values()])
         it_theta_comp.append(np.copy(optim_state['theta']))
         if num_iters == 0:  # new epoch
+            print "==== Epoch %d ====" % num_epochs
             print "Mean gradient norm = %f" % np.mean(it_grad_norm[-N:])
             print "Mean theta norm = %f" % np.mean(it_theta_norm[-N:])
             print "Mean objective = %f" % np.mean(it_loss_surr[-N:])
