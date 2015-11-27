@@ -811,31 +811,42 @@ def _get_surr_costs(costs):
     return total_surr_costs, args_cost, args_rand
 
 def _multi_slice(*lst):
-    def _slicer(x, indices, singleton):
-        assert len(x) == indices[-1] and len(indices) == len(singleton) + 1
+    def _slicer(x, indices, memo):
+        assert len(x) == indices[-1] and len(indices) == len(memo) + 1
         out = []
         for i in range(len(indices)-1):
             o = x[indices[i]:indices[i+1]]
-            if singleton[i]:
+            if memo[i][0] == 'singleton':
                 out.extend(o)
-            else:
+            elif memo[i][0] == 'dict':
+                _v = memo[i][2](o)
+                _d = dict(zip(memo[i][1], _v))
+                out.append(_d)
+            elif memo[i][0] == 'list':
                 out.append(o)
+            else:
+                raise KeyError('unknown memo')
         return out
     args = []
-    indices, singleton, curr_i = [0], [], 0
+    indices, memo, curr_i = [0], [], 0
     for o in lst:
-        if not isinstance(o, (list, tuple)):
-            singleton.append(True)
-            o = [o]
+        if isinstance(o, dict):
+            _m = ['dict', o.keys()]
+            o, sl = _multi_slice(*o.values())
+            _m.append(sl)
+        elif isinstance(o, (list, tuple)):
+            _m = ('list',)
         else:
-            singleton.append(False)
+            _m = ('singleton',)
+            o = [o]
+        memo.append(_m)
         assert all([isinstance(i, Node) for i in o])
         curr_i += len(o)
         indices.append(curr_i)
         args.extend(o)
-    return args, lambda x: _slicer(x, indices, singleton)
+    return args, lambda x: _slicer(x, indices, memo)
 
-def get_surrogate_func(_inputs, _outputs, _costs, _wrt):
+def get_surrogate_func(_inputs, _outputs, _costs, _wrt, _dbg_out={}):
     """
     Internally convert a stochastic computation graph to a deterministic one
     to allow for convenient back-propagation algorithm to perform gradient
@@ -865,10 +876,11 @@ def get_surrogate_func(_inputs, _outputs, _costs, _wrt):
         if m > 1 and not _args_rand:
             warnings.warn('Sample multiple times on a deterministic graph')
         inputs = [np.repeat(i, m, axis=0) for i in inputs]
-        net_out, s_rand, s_loss = f_sample_parser(f_sample(*inputs))
+        net_out, s_rand, s_loss, dbg = f_sample_parser(f_sample(*inputs))
         res['inputs'] = inputs  # exact inputs passed into the net
         res['outputs'] = net_out  # real-valued returns of "_outputs"
         res['samples'] = s_rand  # list[(num_samples, size_sto)]; samples for each stochastic unit
+        res['dbg'] = dbg
         if not kwargs.pop('sample_only', False):
             # does not help with multiple examples
             assert all([i.shape[0] == m for i in inputs]), "one example at a time"
@@ -901,7 +913,8 @@ def get_surrogate_func(_inputs, _outputs, _costs, _wrt):
     _f_sample_out, f_sample_parser = _multi_slice(
         _outputs,  # user-specified arbitrary outputs
         _args_rand.keys(),  # sampled values of stochastic nodes
-        _args_cost.keys()  # sampled downstream cost for stochastic nodes
+        _args_cost.keys(),  # sampled downstream cost for stochastic nodes
+        _dbg_out  # dictionary of debugging output from the net
     )
     f_sample = cgt.function(_inputs, _f_sample_out)
     # function for calculating gradient of the true loss
