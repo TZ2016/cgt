@@ -2,17 +2,27 @@ import os
 import warnings
 import matplotlib.pyplot as plt
 import numpy as np
-import pickle
+
+
+def safe_path(rel_path, out_path, flag=None):
+    abs_path = os.path.join(out_path, rel_path)
+    d = os.path.dirname(abs_path)
+    if not os.path.exists(d):
+        warnings.warn("Making new directory: %s" % d)
+        os.makedirs(d)
+    if flag == 'r':
+        if os.path.isfile(abs_path):
+            return open(abs_path, 'r')
+        warnings.warn("Attempt to read non-existing file: %s" % abs_path)
+        return open(abs_path, 'w')
+    elif flag == 'w':
+        if os.path.exists(abs_path):
+            warnings.warn("Overwritten an existing file: %s" % abs_path)
+        return open(abs_path, 'w')
+    return abs_path
 
 
 def example_debug(args, X, Y, Y_var=None):
-    def safe_path(rel_path):
-        abs_path = os.path.join(out_path, rel_path)
-        d = os.path.dirname(abs_path)
-        if not os.path.exists(d):
-            warnings.warn("Making new directory: %s" % d)
-            os.makedirs(d)
-        return abs_path
     def h_ax(ax, title=None, x=None, y=None):
         if not isinstance(ax, (tuple, list, np.ndarray)): ax = [ax]
         for a in ax:
@@ -36,7 +46,7 @@ def example_debug(args, X, Y, Y_var=None):
                 else:
                     raise KeyError
     N, _ = X.shape
-    out_path = args['dump_path']
+    _safe_path = lambda p: safe_path(p, args['dump_path'])
     conv_smoother = lambda x: np.convolve(x, [1. / N] * N, mode='valid')
     _ix, _iy = args['dbg_plot_samples']['x_dim'], args['dbg_plot_samples']['y_dim']
     # cache
@@ -58,7 +68,7 @@ def example_debug(args, X, Y, Y_var=None):
                                    for t in param_col.get_values()])
         it_theta_comp.append(np.copy(optim_state['theta']))
         if num_iters == 0:  # new epoch
-            print "==== Epoch %d ====" % num_epochs
+            print "Epoch %d" % num_epochs
             print "Mean gradient norm = %f" % np.mean(it_grad_norm[-N:])
             print "Mean theta norm = %f" % np.mean(it_theta_norm[-N:])
             print "Mean objective = %f" % np.mean(it_loss_surr[-N:])
@@ -78,40 +88,33 @@ def example_debug(args, X, Y, Y_var=None):
             'xticks': np.arange(args['n_epochs']) * N,
             'xticklabels': np.arange(args['n_epochs']).astype(str)
         }
-        param_col = workspace['param_col']
-        optim_state = workspace['optim_state']
-        # save params
-        print "Saving params to %s" % safe_path('.')
-        pickle.dump(args, open(safe_path('args.pkl'), 'w'))
-        pickle.dump(param_col.get_values(), open(safe_path('params.pkl'), 'w'))
-        pickle.dump(optim_state, open(safe_path('__snapshot.pkl'), 'w'))
-        pickle.dump(np.array(it_theta_comp), open(safe_path('params_history.pkl'), 'w'))
-        # plot overview
-        f, axs = plt.subplots(3, 1, sharex=True, subplot_kw=kw_ticks)
-        f.suptitle('overview')
-        axs[0].plot(conv_smoother(it_loss_surr))
-        h_ax(axs[0], title='loss', x='hide')
-        axs[1].plot(conv_smoother(it_grad_norm)); axs[1].set_title('grad')
-        h_ax(axs[1], title='grad', x='hide')
-        axs[2].plot(conv_smoother(it_theta_norm)); axs[2].set_title('theta')
-        h_ax(axs[2], title='theta')
-        f.savefig(safe_path('overview.png')); plt.close(f)
-        # plot grad norm component-wise
-        _grad_norm_cmp = np.array(it_grad_norm_comp).T
-        f, axs = plt.subplots(_grad_norm_cmp.shape[0], 1, sharex=True, subplot_kw=kw_ticks)
-        f.suptitle('grad norm layer-wise')
-        for _i, _ax in enumerate(axs):
-            _ax.plot(conv_smoother(_grad_norm_cmp[_i]))
-        h_ax(axs[:-1], x='hide'); h_ax(axs, y='mm')
-        f.tight_layout(); f.savefig(safe_path('norm_grad_cmp.png')); plt.close(f)
-        # plot theta norm component-wise
-        _theta_norm_cmp = np.array(it_theta_norm_comp).T
-        f, axs = plt.subplots(_theta_norm_cmp.shape[0], 1, sharex=True, subplot_kw=kw_ticks)
-        f.suptitle('theta norm layer-wise')
-        for _i, _ax in enumerate(axs):
-            _ax.plot(conv_smoother(_theta_norm_cmp[_i]))
-        h_ax(axs[:-1], x='hide'); h_ax(axs, y='mm')
-        f.tight_layout(); f.savefig(safe_path('norm_theta_cmp.png')); plt.close(f)
+        if args['dbg_plot_charts']:
+            # plot overview
+            f, axs = plt.subplots(3, 1, sharex=True, subplot_kw=kw_ticks)
+            f.suptitle('overview')
+            axs[0].plot(conv_smoother(it_loss_surr))
+            h_ax(axs[0], title='loss', x='hide')
+            axs[1].plot(conv_smoother(it_grad_norm)); axs[1].set_title('grad')
+            h_ax(axs[1], title='grad', x='hide')
+            axs[2].plot(conv_smoother(it_theta_norm)); axs[2].set_title('theta')
+            h_ax(axs[2], title='theta')
+            f.savefig(_safe_path('overview.png')); plt.close(f)
+            # plot grad norm component-wise
+            _grad_norm_cmp = np.array(it_grad_norm_comp).T
+            f, axs = plt.subplots(_grad_norm_cmp.shape[0], 1, sharex=True, subplot_kw=kw_ticks)
+            f.suptitle('grad norm layer-wise')
+            for _i, _ax in enumerate(axs):
+                _ax.plot(conv_smoother(_grad_norm_cmp[_i]))
+            h_ax(axs[:-1], x='hide'); h_ax(axs, y='mm')
+            f.tight_layout(); f.savefig(_safe_path('norm_grad_cmp.png')); plt.close(f)
+            # plot theta norm component-wise
+            _theta_norm_cmp = np.array(it_theta_norm_comp).T
+            f, axs = plt.subplots(_theta_norm_cmp.shape[0], 1, sharex=True, subplot_kw=kw_ticks)
+            f.suptitle('theta norm layer-wise')
+            for _i, _ax in enumerate(axs):
+                _ax.plot(conv_smoother(_theta_norm_cmp[_i]))
+            h_ax(axs[:-1], x='hide'); h_ax(axs, y='mm')
+            f.tight_layout(); f.savefig(_safe_path('norm_theta_cmp.png')); plt.close(f)
         # plot samples for each epoch
         if args['dbg_plot_samples']['plot']:
             for _e, _distr in enumerate(ep_net_distr):
@@ -119,5 +122,5 @@ def example_debug(args, X, Y, Y_var=None):
                 plt.scatter(X[:, _ix], Y[:, _iy], alpha=0.5, color='y', marker='*')
                 plt.gca().set_autoscale_on(False)
                 _distr[1](); plt.title(_ttl)
-                plt.savefig(safe_path('_sample/' + _ttl)); plt.cla()
+                plt.savefig(_safe_path('_sample/' + _ttl)); plt.cla()
     return dbg_iter, dbg_done

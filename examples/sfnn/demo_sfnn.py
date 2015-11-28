@@ -12,7 +12,7 @@ from cgt.utility.param_collection import ParamCollection
 from cgt.distributions import gaussian_diagonal
 
 from opt import rmsprop_create, rmsprop_update, adam_create, adam_update
-from debug import example_debug
+from debug import example_debug, safe_path
 from layers import combo_layer
 
 
@@ -186,6 +186,7 @@ def step(X, Y, workspace, config, Y_var=None, dbg_iter=None, dbg_done=None):
     num_epochs = num_iters = 0
     while num_epochs < config['n_epochs']:
         ind = np.random.choice(X.shape[0], config['size_batch'])
+        # ind = [num_iters]  # for ordered data
         x, y = X[ind], Y[ind]
         if config['variance'] == 'in':
             y_var = Y_var[ind]
@@ -199,8 +200,21 @@ def step(X, Y, workspace, config, Y_var=None, dbg_iter=None, dbg_done=None):
         if num_iters == Y.shape[0]:
             num_epochs += 1
             num_iters = 0
+            # TODO remove the below
+            h_prob = np.exp(info['objective_unweighted'] - info['weights_raw_log'])
+            print np.unique(np.round(h_prob, 2), return_counts=True)
+            print np.unique(np.round(info['weights'], 3), return_counts=True)
         if dbg_iter:
             dbg_iter(num_epochs, num_iters, info, workspace)
+    # save params
+    if 'dump_path' in config:
+        out_path = config['dump_path']
+        if not os.path.exists(out_path):
+            os.makedirs(out_path)
+        print "Saving params to %s" % out_path
+        # pickle.dump(args, open(_safe_path('args.pkl'), 'w'))
+        pickle.dump(param_col.get_values(), safe_path('params.pkl', out_path, 'w'))
+        pickle.dump(optim_state, safe_path('__snapshot.pkl', out_path, 'w'))
     if dbg_done: dbg_done(workspace)
     return param_col, optim_state
 
@@ -255,6 +269,8 @@ def create(args):
         'f_grad': f_grad,
         'update': f_update,
     }
+    print "Configurations"
+    pprint.pprint(args)
     return workspace
 
 

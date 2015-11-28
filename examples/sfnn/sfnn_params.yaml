@@ -27,6 +27,7 @@ init_theta:
 # debugging
 debug: True
 dbg_out_full: True
+dbg_plot_charts: True
 dbg_plot_samples:
   plot: True
   batch: 100

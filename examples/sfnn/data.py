@@ -12,6 +12,7 @@ def scale_data(X, Y, Y_var=None, scalers=None):
     if Y_var is not None:
         scalers[1].with_mean = False
         s_Y_var = np.square(scalers[1].transform(np.sqrt(Y_var)))
+        scalers[1].with_mean = True
         return s_X, s_Y, s_Y_var
     return s_X, s_Y
 
