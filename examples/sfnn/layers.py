@@ -27,7 +27,7 @@ from cgt import nn
 #     return out
 
 
-def combo_layer(X, size_in, size_out, splits, funcs, name='?'):
+def combo_layer(X, size_in, size_out, splits, funcs, name='?', dbg_out={}):
     assert isinstance(splits, tuple) and len(splits) > 0
     assert all(splits[i] < splits[i+1] for i in xrange(len(splits) - 1))
     assert splits[0] >= 0 and splits[-1] <= size_out
@@ -44,16 +44,17 @@ def combo_layer(X, size_in, size_out, splits, funcs, name='?'):
     if len(splits) > 0 and splits[-1] == size_out:
         splits.pop()
         funcs.pop()
-    curr, ins, outs = 0, [], []
-    splits.append(size_out)    
+    curr, names, ins, outs = 0, [], [], []
+    splits.append(size_out)
     for _split, _func in zip(splits, funcs):
-        _i = cgt.sigmoid(nn.Affine(
-            size_in, _split - curr,
-            name='L%s(%d:%d)' % (name, curr, _split)
-        )(X))
+        _name = 'L%s[%d:%d]' % (name, curr, _split)
+        _i = cgt.sigmoid(nn.Affine(size_in, _split - curr, name=_name)(X))
         _o = _func(_i) if _func is not None else _i
         curr = _split
-        outs.append(_o)
         ins.append(_i)
+        outs.append(_o)
+        names.append(_name)
     out = cgt.concatenate(outs, axis=1) if len(outs) > 1 else outs[0]
+    dbg_out.update(dict(zip([_n + '~in' for _n in names], ins)))
+    dbg_out.update(dict(zip([_n + '~out' for _n in names], outs)))
     return out

@@ -13,6 +13,7 @@ from cgt.distributions import gaussian_diagonal
 
 from opt import rmsprop_create, rmsprop_update, adam_create, adam_update
 from debug import example_debug
+from layers import combo_layer
 
 
 def err_handler(type, flag):
@@ -69,16 +70,6 @@ def mask_layer(func, X, size_in, i_start, i_end=None):
     return out
 
 
-def hybrid_layer(X, size_in, size_out, size_random, dbg_out=[]):
-    assert size_out >= size_random >= 0
-    out = cgt.sigmoid(nn.Affine(
-        size_in, size_out, name="InnerProd(%d->%d)" % (size_in, size_out)
-    )(X))
-    dbg_out.append(out)
-    out = mask_layer(cgt.bernoulli, out, size_out, size_random)
-    return out
-
-
 def lstm_layers(size_in, size_out, num_units):
     """
     Construct a recurrent neural network with multiple layers of LSTM units,
@@ -113,24 +104,25 @@ def lstm_layers(size_in, size_out, num_units):
     return inputs, outputs
 
 
-def hybrid_network(size_in, size_out, num_units, num_stos, dbg_out=[]):
+def hybrid_network(size_in, size_out, num_units, num_stos, dbg_out={}):
     assert len(num_units) == len(num_stos)
     net_in = cgt.matrix("X", fixed_shape=(None, size_in))
     prev_num_units, prev_out = size_in, net_in
-    dbg_out.append(net_in)
+    dbg_out['NET~in'] = net_in
+    curr_layer = 1
     for (curr_num_units, curr_num_sto) in zip(num_units, num_stos):
-        _layer_dbg_out = []
-        prev_out = hybrid_layer(
-            prev_out, prev_num_units, curr_num_units, curr_num_sto,
-            dbg_out=_layer_dbg_out
-        )
+        assert curr_num_units >= curr_num_sto >= 0
+        prev_out = combo_layer(prev_out, prev_num_units, curr_num_units,
+                  (curr_num_sto,),
+                  (cgt.bernoulli, None),
+                  name=str(curr_layer), dbg_out=dbg_out)
+        dbg_out['L%d~out' % curr_layer] = prev_out
         prev_num_units = curr_num_units
-        dbg_out.extend(_layer_dbg_out)
-        dbg_out.append(prev_out)
+        curr_layer += 1
     net_out = nn.Affine(prev_num_units, size_out,
                         name="InnerProd(%d->%d)" % (prev_num_units, size_out)
                         )(prev_out)
-    dbg_out.append(net_out)
+    dbg_out['NET~out'] = net_out
     return net_in, net_out
 
 
@@ -178,9 +170,8 @@ def make_funcs(net_in, net_out, config, dbg_out=None):
         loss_raw += loss_param
     # end of loss definition
     f_step = cgt.function(inputs, net_out)
-    f_surr = get_surrogate_func(inputs + [Y],
-                                net_out + dbg_out,
-                                [loss_raw], params)
+    f_surr = get_surrogate_func(inputs + [Y], net_out,
+                                [loss_raw], params, _dbg_out=dbg_out)
     # TODO_TZ f_step seems not to fail if X has wrong dim
     return params, f_step, None, None, f_surr
 
@@ -215,11 +206,11 @@ def step(X, Y, workspace, config, Y_var=None, dbg_iter=None, dbg_done=None):
 
 
 def create(args):
-    dbg_out = []
+    dbg_out = {}
     net_in, net_out = hybrid_network(args['num_inputs'], args['num_outputs'],
                                      args['num_units'], args['num_sto'],
                                      dbg_out=dbg_out)
-    if args['dbg_out_full']: dbg_out = []
+    if not args['dbg_out_full']: dbg_out = {}
     params, f_step, f_loss, f_grad, f_surr = \
         make_funcs(net_in, net_out, args, dbg_out=dbg_out)
     param_col = ParamCollection(params)
