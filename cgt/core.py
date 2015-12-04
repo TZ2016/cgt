@@ -1995,6 +1995,102 @@ class IRFFT(Op):
     def typ_apply(self, inputs):
         return TensorType(cgt.floatX,inputs[0].ndim)
 
+# Matrix inverse
+# courtesy of Tuomas Haarnoja
+# ----------------------------------------------------------------
+
+class Inv(Op):
+    available_impls = ("python", "native_cpu")
+    return_type = "byref"
+    def get_py_func(self, input_types):
+        def f(reads,write):
+            write[...] = np.linalg.inv(reads[0])
+        return f
+    def pullback(self, inputs, _output, goutput):
+        Ainv = Result(Inv(), inputs)
+        return [-Ainv.dot(goutput).dot(Ainv).transpose()]
+    def shp_apply(self, inputs):
+        return inputs[0].shape
+    def typ_apply(self, input_types):
+        return input_types[0]
+    def get_native_compile_info(self, input_types, devtype):
+        npdtype = input_types[0].dtype
+        try:
+            letter = {"f4":"s","f8":"d","c8":"c","c16":"z"}[npdtype]
+        except KeyError:
+            raise MethodNotDefined("Dtype %s not supported by this BLAS. Falling back to numpy"%npdtype)
+        code = r"""
+            extern "C" void %(letter)sgetrf_(int* M, int* N, %(cdtype)s* A, int* LDA, int* IPIV, int* info);
+            extern "C" void %(letter)sgetri_(int* N, %(cdtype)s* A, int* LDA, int* IPIV, %(cdtype)s* work, int* lwork, int*info);
+
+            CGT_EXPORT_C void $function(void**, cgtArray** reads, cgtArray* write) {
+                cgtArray *A = reads[0];
+                cgt_assert(A->size() == write->size());
+
+                if (write->data() != A->data()) cgt_memcpy(cgtCPU, cgtCPU, write->data(), A->data(), A->nbytes());
+
+                int N = write->shape()[0];
+                int LDA = N;
+                int info = 0;
+                int lwork = N*N;
+
+                int *IPIV = (int *)malloc((N+1)*sizeof(int));
+                %(cdtype)s *workspace = (%(cdtype)s *)malloc((N*N)*sizeof(%(cdtype)s));
+
+                %(letter)sgetrf_(&N, &N, (%(cdtype)s*)write->data(), &N, IPIV, &info);
+                %(letter)sgetri_(&N, (%(cdtype)s*)write->data(), &N, IPIV, workspace, &lwork, &info);
+
+                delete IPIV, workspace;
+
+            }
+            """%dict(letter=letter, cdtype = np2c[npdtype])
+        return NativeCompileInfo(code)
+
+# log det. cpu implementation assumes PD matrix
+# courtesy of Tuomas Haarnoja
+# ----------------------------------------------------------------
+
+class LogDetPD(Op):
+    available_impls = ("python", "native_cpu")
+    return_type = "byref"
+    def get_py_func(self, input_types):
+        def f(reads,write):
+            write[...] = np.log(np.linalg.det(reads[0]))
+        return f
+    def pullback(self, inputs, _output, goutput):
+        return [Result(Inv(), inputs).transpose()]
+    def shp_apply(self, inputs):
+        return []
+    def typ_apply(self, input_types):
+        return TensorType(cgt.floatX, 0)
+    def get_native_compile_info(self, input_types, devtype):
+        npdtype = input_types[0].dtype
+        try:
+            letter = {"f4":"s","f8":"d","c8":"c","c16":"z"}[npdtype]
+        except KeyError:
+            raise MethodNotDefined("Dtype %s not supported by this BLAS. Falling back to numpy"%npdtype)
+        code = r"""
+            #include <math.h>
+            extern "C" void %(letter)spotrf_(char* type, int* N, %(cdtype)s* A, int* LDA, int* info);
+            CGT_EXPORT_C void $function(void**, cgtArray** reads, cgtArray* write) {
+                cgtArray *A = reads[0];
+                cgt_assert(write->size() == 1);
+                char type = 'L';
+                int info = 0;
+                int N = A->shape()[0];
+
+                %(cdtype)s *workspace = (%(cdtype)s *)malloc(A->nbytes());
+                cgt_memcpy(cgtCPU, cgtCPU, workspace, A->data(), A->nbytes());
+                %(letter)spotrf_(&type, &N, workspace, &N, &info);
+                %(cdtype)s logdet = 0;
+                for(int i=0; i<N; i++) logdet += 2*log(workspace[i*N+i]);
+                ((%(cdtype)s *)write->data())[0] = logdet;
+
+                delete workspace;
+            }
+            """%dict(letter=letter, cdtype = np2c[npdtype])
+        return NativeCompileInfo(code)
+
 # Reductions
 # ----------------------------------------------------------------
 
