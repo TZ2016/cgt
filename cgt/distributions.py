@@ -47,11 +47,13 @@ bernoulli = _Bernoulli()
 class _Gaussian(Distribution):
     def logprob(self, x, mu, invSigma):
         assert invSigma.ndim == 3 and mu.ndim == x.ndim == 2
-        k = x.shape[1]
-        log_det = -cgt.logdet(invSigma)
-        prob_z = -.5 * (k * np.log(2. * np.pi) + log_det)
-        prob_e = -.5 * cgt.batched_matmul(cgt.batched_matmul(x - mu, invSigma), x - mu)
-        return prob_z + prob_e
+        b, k = x.shape[:2]
+        prob_z = -.5 * (k * np.log(2. * np.pi) - cgt.logdet(invSigma))
+        prob_e = -.5 * cgt.batched_matmul(cgt.batched_matmul(
+            cgt.reshape(x - mu, (b, 1, k)), invSigma),
+            cgt.reshape(x - mu, (b, k, 1))
+        )
+        return cgt.reshape(prob_z, (b, 1)) + cgt.reshape(prob_e, (b, 1))
 gaussian = _Gaussian()
 
 
