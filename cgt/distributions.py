@@ -44,6 +44,17 @@ class _Bernoulli(Distribution):
             return np.array(nr.rand(*p.shape) <= p)
 bernoulli = _Bernoulli()
 
+class _Gaussian(Distribution):
+    def logprob(self, x, mu, invSigma):
+        assert invSigma.ndim == 3 and mu.ndim == x.ndim == 2
+        k = x.shape[1]
+        log_det = -cgt.logdet(invSigma)
+        prob_z = -.5 * (k * np.log(2. * np.pi) + log_det)
+        prob_e = -.5 * cgt.batched_matmul(cgt.batched_matmul(x - mu, invSigma), x - mu)
+        return prob_z + prob_e
+gaussian = _Gaussian()
+
+
 class _DiagonalGaussian(Distribution):
     def logprob(self, x, mu, sigma):
         """ Calculate logprob for each row of x, mu, sigma """
