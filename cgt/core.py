@@ -2050,19 +2050,25 @@ class Inv(Op):
 # ----------------------------------------------------------------
 
 class LogDetPD(Op):
-    available_impls = ("python", "native_cpu")
+    available_impls = ("python", )  # "native_cpu"
     return_type = "byref"
     def get_py_func(self, input_types):
         def f(reads,write):
-            write[...] = np.log(np.linalg.det(reads[0]))
+            signs, logdets = np.linalg.slogdet(reads[0])
+            assert np.all(signs >= 0), "matrix not PD"
+            write[...] = logdets
+            # write[...] = np.log(np.linalg.det(reads[0]))
         return f
     def pullback(self, inputs, _output, goutput):
+        # TODO: not yet support broadcasting
         return [Result(Inv(), inputs).transpose()]
     def shp_apply(self, inputs):
-        return []
+        x = inputs[0]
+        return [] if x.ndim == 2 else [x.shape[0]]
     def typ_apply(self, input_types):
-        return TensorType(cgt.floatX, 0)
+        return TensorType(cgt.floatX, input_types[0].ndim - 2)
     def get_native_compile_info(self, input_types, devtype):
+        # TODO: not yet support broadcasting
         npdtype = input_types[0].dtype
         try:
             letter = {"f4":"s","f8":"d","c8":"c","c16":"z"}[npdtype]
@@ -2194,8 +2200,6 @@ class Argmax(Op):
 
 # Slicing
 # ----------------------------------------------------------------
-
-
 
 class GetSli(Op):
     available_impls = ("python","native_cpu")
@@ -2894,6 +2898,23 @@ class MakeTuple(Op):
     
 def unpack(tup):
     return [Result(TupleIndex(i),[tup]) for i in xrange(len(tup.typ))]
+
+# For-each loop
+# ----------------------------------------------------------------
+
+# class ForEach(Op):
+#     available_impls = ("python",)
+#     def get_py_func(self, input_types):
+#         def f(inputs):
+#             op, axis, _inputs = inputs[0], inputs[1], inputs[2:]
+#             _f = inputs[0].get_py_func(input_types)
+#             length = _inputs[0].shape[axis]
+#             assert all(length == i.shape[axis] for i in _inputs)
+#             res = []
+#             for i in range(length):
+#                 v = _f([x[i] for x in _inputs])
+#                 res.append(v)
+
 
 # Assertion and debug operations
 # ----------------------------------------------------------------
