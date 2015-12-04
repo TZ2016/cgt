@@ -870,7 +870,7 @@ def get_surrogate_func(_inputs, _outputs, _costs, _wrt, _dbg_out={}):
             sample_only: only sample the original graph without gradients
         """
         res = {}
-        assert all([i.ndim == 2 for i in inputs]), 'each input of shape (size_batch, size_in)'
+        assert all([i.ndim >= 2 for i in inputs])
         m = int(kwargs.pop('num_samples', 1))
         assert m > 0, 'positive number of samples'
         if m > 1 and not _args_rand:
