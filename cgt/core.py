@@ -2041,7 +2041,6 @@ class Inv(Op):
                 %(letter)sgetri_(&N, (%(cdtype)s*)write->data(), &N, IPIV, workspace, &lwork, &info);
 
                 delete IPIV, workspace;
-
             }
             """%dict(letter=letter, cdtype = np2c[npdtype])
         return NativeCompileInfo(code)

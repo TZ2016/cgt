@@ -754,3 +754,15 @@ def dimshuffle(arr, pattern):
         if x_idxs:
             result = reshape(result, tuple(shapes))
         return result
+
+def logdet(X):
+    """
+    Log determinant of a positive-definite matrix
+    """
+    return core.Result(core.LogDetPD(), [X])
+
+def inv(X):
+    """
+    Inverse of an invertible matrix
+    """
+    return core.Result(core.Inv(), [X])
