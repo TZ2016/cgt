@@ -883,7 +883,9 @@ def get_surrogate_func(_inputs, _outputs, _costs, _wrt, _dbg_out={}):
         res['dbg'] = dbg
         if not kwargs.pop('sample_only', False):
             # does not help with multiple examples
-            assert all([i.shape[0] == m for i in inputs]), "one example at a time"
+            # assert all([i.shape[0] == m for i in inputs]), "one example at a time"
+            if not all([i.shape[0] == m for i in inputs]):
+                warnings.warn('This maybe problematic to stochastic net')
             if m == 1: warnings.warn('Sampling network only once')
             obj, obj_vec, wt_vec, wt_vec_log, obj_unwt_vec, grad_obj = \
                 f_surr_parser(f_surr(*(list(inputs) + s_rand + s_loss)))
@@ -898,12 +900,13 @@ def get_surrogate_func(_inputs, _outputs, _costs, _wrt, _dbg_out={}):
     # note that _obj_unwt_vec is defined in the new graph
     # for the rest, keys belong to the old graph, and values the new
     _obj_unwt_vec, _args_cost, _args_rand = _get_surr_costs(_costs)
-    # importance weights: P(y|h, x) scaled. by P(y|x) = \sum P(y|h,x)
-    _wt_vec_log = _args_cost.values()[0]  # TODO_TZ [0] is just a makeshift
-    # _exp_cap = 88 - cgt.log(_wt_vec_log.shape[0])  # for float32, exp(88) < inf
-    # _wt_vec = cgt.exp(_wt_vec_log - cgt.max(_wt_vec_log) + _exp_cap)  # hack for underflow issue
-    # _wt_vec = cgt.safe_div(_wt_vec, cgt.sum(_wt_vec))
-    _wt_vec = cgt.safe_lognorm(_wt_vec_log, 0)
+    if _args_rand:  # stochastic units present
+        # importance weights: P(y|h, x) scaled. by P(y|x) = \sum P(y|h,x)
+        _wt_vec_log = _args_cost.values()[0]  # TODO_TZ [0] is just a makeshift
+        _wt_vec = cgt.safe_lognorm(_wt_vec_log, 0)
+    else:
+        _wt_vec_log = cgt.zeros_like(_args_cost.values()[0])
+        _wt_vec = cgt.ones_like(_wt_vec_log)
     # true objective, or expected complete log-lik: log P(y|x)
     # before weighting: log P(h|x) + log P(y|h,x) = log P(y,h|x)
     _obj_vec = _wt_vec * _obj_unwt_vec
