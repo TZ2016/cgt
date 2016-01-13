@@ -191,6 +191,22 @@ def dot(x, y):
     else:
         raise NotImplementedError
 
+def cross(x, y):
+    """
+    Like numpy.cross
+    x,y: variables
+    """
+    x, y = core.as_node(x), core.as_node(y)
+    assert x.ndim == y.ndim == 1
+    core.assertequal1(x.shape[0], 3, "Must have size 3")
+    core.assertequal1(y.shape[0], 3, "Must have size 3")
+    result = concatenate(map(lambda x: cgt.reshape(x, [1]), [
+        x[1] * y[2] - x[2] * y[1],
+        x[2] * y[0] - x[0] * y[2],
+        x[0] * y[1] - x[1] * y[0]
+    ]))
+    return result
+
 def diag(v, k=0):
     """
     see numpy.diag
